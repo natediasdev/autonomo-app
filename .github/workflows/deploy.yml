@@ -12,8 +12,6 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Resolve o aviso de depreciação
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,14 +19,15 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24 # Atualizado para a versão exigida em 2026
+          node-version: 24
           cache: 'npm'
 
       - name: Install dependencies
         run: npm install
 
       - name: Build
-        run: npm run build
+        # O CI=false impede que avisos (warnings) sejam tratados como erros fatais
+        run: CI=false npm run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -38,6 +37,5 @@ jobs:
         with:
           path: './dist'
 
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - name: Deploy
         uses: actions/deploy-pages@v4

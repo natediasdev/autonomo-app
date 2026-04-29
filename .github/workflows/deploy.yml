@@ -11,32 +11,35 @@ permissions:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  environment:
+    name: github-pages
+    url: ${{ steps.deploy-pages.outputs.page_url }}
+  runs-on: ubuntu-latest
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'npm'
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: 'npm'
 
-      - name: Install dependencies
-        # O uso de --legacy-peer-deps é obrigatório aqui para o build passar
-        run: npm install --legacy-peer-deps
+    - name: Install dependencies
+      # O uso de --legacy-peer-deps é obrigatório aqui para o build passar
+      run: npm install --legacy-peer-deps
 
-      - name: Build
-        # CI=false evita que avisos de código (warnings) parem o deploy
-        run: CI=false npm run build
+    - name: Build
+      # CI=false evita que avisos de código (warnings) parem o deploy
+      run: CI=false npm run build
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+    - name: Setup Pages
+      uses: actions/configure-pages@v5
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './dist'
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: './dist'
 
-      - name: Deploy
-        uses: actions/deploy-pages@v4
+    - name: Deploy
+      uses: actions/deploy-pages@v4

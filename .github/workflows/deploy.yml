@@ -10,7 +10,7 @@ permissions:
   id-token: write
 
 jobs:
-  build-and-deploy:
+  build-and-deploy: deployYML
   environment:
     name: github-pages
     url: ${{ steps.deploy-pages.outputs.page_url }}

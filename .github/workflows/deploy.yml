@@ -23,10 +23,11 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        # O uso de --legacy-peer-deps é obrigatório aqui para o build passar
+        run: npm install --legacy-peer-deps
 
       - name: Build
-        # O CI=false impede que avisos (warnings) sejam tratados como erros fatais
+        # CI=false evita que avisos de código (warnings) parem o deploy
         run: CI=false npm run build
 
       - name: Setup Pages

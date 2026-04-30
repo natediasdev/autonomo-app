@@ -293,13 +293,16 @@ function Sheet({ children, onClose }) {
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         style={S.overlay} onClick={onClose}
       />
-      <motion.div
-        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-        transition={{ type: 'spring', stiffness: 360, damping: 32 }}
-        style={S.sheet}
-      >
-        {children}
-      </motion.div>
+      {/* Wrapper handles centering — motion.div only handles y animation */}
+      <div style={S.sheetWrapper}>
+        <motion.div
+          initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+          transition={{ type: 'spring', stiffness: 360, damping: 32 }}
+          style={S.sheet}
+        >
+          {children}
+        </motion.div>
+      </div>
     </>
   )
 }
@@ -429,7 +432,8 @@ const S = {
   clientName:   { fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em' },
   notePreview:  { fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, background: 'var(--bg-3)', borderRadius: 6, padding: '6px 10px', borderLeft: '2px solid var(--accent)' },
   overlay:      { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 200 },
-  sheet:        { position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '20px 20px calc(var(--nav-height) + 16px)', zIndex: 201 },
+  sheetWrapper: { position: 'fixed', bottom: 0, left: 0, right: 0, display: 'flex', justifyContent: 'center', zIndex: 201, pointerEvents: 'none' },
+  sheet:        { width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '20px 20px calc(var(--nav-height) + 16px)', pointerEvents: 'auto' },
   sheetHeader:  { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
   sheetTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800 },
   sheetSub:     { fontSize: 13, color: 'var(--text-2)', marginTop: 3 },

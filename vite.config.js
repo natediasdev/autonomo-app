@@ -17,7 +17,7 @@ export default defineConfig({
       manifest: {
         name: 'AutônomoApp',
         short_name: 'Autônomo',
-        description: 'Agenda de limpeza de vidros para autônomos',
+        description: 'Organize sua agenda de clientes, acompanhe pagamentos e gere relatórios mensais. Funciona offline, instala direto no celular e não exige cadastro. Feito para autônomos que trabalham sozinhos.',
         theme_color: '#1976D2',
         background_color: '#060606',
         display: 'standalone',

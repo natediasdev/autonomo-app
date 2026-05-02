@@ -234,18 +234,41 @@ export function deletePayment(id) {
   savePayments(getPayments().filter((p) => p.id !== id))
 }
 
-function monthsDue(startDate) {
-  const start = typeof startDate === 'string' ? parseISO(startDate) : new Date(startDate)
-  const now   = new Date()
-  return (getYear(now) - getYear(start)) * 12 + (getMonth(now) - getMonth(start)) + 1
+// ─── Cycle-based billing ────────────────────────────────────────────────────
+//
+// Instead of "months since start × fee", we count completed visit CYCLES.
+// A cycle = one full interval (semanal=1w, quinzenal=2w, mensal=4w).
+// Each completed cycle generates one charge. Payment covers cycles in order.
+// This means: if you paid for cycle 1-2, you're "in day" until cycle 3 completes.
+
+function getCompletedCycles(client) {
+  const def = SERVICE_TYPES[client.service]
+  if (!def || !client.monthlyFee) return 0
+
+  const visitDates = getVisitDates(client, 52) // look up to ~1yr ahead
+  const completions = getCompletions()
+
+  // Count how many visits have been completed (each = 1 cycle charge)
+  return visitDates.filter(orig => completions.includes(`${client.id}:${orig}`)).length
 }
 
 export function getClientBalance(client) {
-  const months  = Math.max(0, monthsDue(client.startDate))
-  const charged = months * (client.monthlyFee || 0)
-  const paid    = getPaymentsForClient(client.id).reduce((s, p) => s + p.amount, 0)
+  const fee = client.monthlyFee || 0
+
+  // Count completed cycles = how many charges generated
+  const completedCycles = getCompletedCycles(client)
+  const charged = completedCycles * fee
+
+  const paid = getPaymentsForClient(client.id).reduce((s, p) => s + p.amount, 0)
   const balance = charged - paid
-  return { charged, paid, balance, overdue: balance > 0.005 }
+
+  return {
+    charged,
+    paid,
+    balance,
+    overdue: balance > 0.005,
+    completedCycles,
+  }
 }
 
 export function getFinancialSummary() {
@@ -257,11 +280,27 @@ export function getFinancialSummary() {
   let totalExpectedMonth = 0, totalReceivedMonth = 0, totalDebt = 0, overdueCount = 0
 
   clients.forEach((client) => {
-    totalExpectedMonth += client.monthlyFee || 0
+    // Expected this month: visits completed this month × fee
+    const def = SERVICE_TYPES[client.service]
+    const fee = client.monthlyFee || 0
+    const visitDates = getVisitDates(client, 8)
+    const completions = getCompletions()
+
+    const completedThisMonth = visitDates.filter(orig => {
+      const effective = effectiveDate(client.id, orig)
+      try {
+        const d = parseISO(effective)
+        return isWithinInterval(d, { start: mStart, end: mEnd }) &&
+               completions.includes(`${client.id}:${orig}`)
+      } catch { return false }
+    }).length
+    totalExpectedMonth += completedThisMonth * fee
+
     const payments = getPaymentsForClient(client.id)
     totalReceivedMonth += payments
       .filter((p) => { try { return isWithinInterval(parseISO(p.date), { start: mStart, end: mEnd }) } catch { return false } })
       .reduce((s, p) => s + p.amount, 0)
+
     const { balance, overdue } = getClientBalance(client)
     if (overdue) { totalDebt += balance; overdueCount++ }
   })

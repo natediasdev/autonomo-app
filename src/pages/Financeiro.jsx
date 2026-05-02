@@ -5,6 +5,7 @@ import { ChevronLeft, Plus, Trash2, TrendingUp, X } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { getClients, getPaymentsForClient, addPayment, deletePayment, getClientBalance, formatCurrency, SERVICE_TYPES } from '../utils/data.js'
+import ReciboDownload from '../components/Recibo.jsx'
 import { useCountUp, formatCurrencyBRL } from '../hooks/useCountUp.js'
 
 function AnimCurrency({ value, color, size = 15 }) {
@@ -143,16 +144,23 @@ export default function Financeiro() {
               transition={{ duration: 0.22, delay: i * 0.05 }}
               style={S.payRow}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
                 <div style={S.payIcon}><TrendingUp size={14} color="var(--accent)" /></div>
-                <div>
+                <div style={{ flex: 1 }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 15, fontWeight: 700 }}>{formatCurrency(p.amount)}</span>
                   <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 1 }}>
                     {format(parseISO(p.date), "d 'de' MMM yyyy", { locale: ptBR })}{p.note ? ` · ${p.note}` : ''}
                   </p>
+                  <div style={{ marginTop: 8 }}>
+                    <ReciboDownload
+                      payment={p}
+                      client={client}
+                      receiptNumber={String(payments.length - i).padStart(3, '0')}
+                    />
+                  </div>
                 </div>
               </div>
-              <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 8 }} onClick={() => setConfirmDel(p.id)}>
+              <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 8, alignSelf: 'flex-start' }} onClick={() => setConfirmDel(p.id)}>
                 <Trash2 size={14} color="var(--text-3)" />
               </button>
             </motion.div>

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, ChevronRight, Trash2, Phone, AlertCircle } from 'lucide-react'
-import { getClients, deleteClient, SERVICE_TYPES, getNextVisit, formatShortDate, getClientBalance, formatCurrency } from '../utils/data.js'
+import { getClients, deleteClient, SERVICE_TYPES, getNextVisit, formatShortDate, getClientBalance, getCurrentCycleInfo, formatCurrency } from '../utils/data.js'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 
 export default function Clientes() {
@@ -83,6 +83,20 @@ export default function Clientes() {
   )
 }
 
+function CycleChip({ client, color }) {
+  const info = getCurrentCycleInfo(client)
+  if (!info || info.total === 0) return null
+  return (
+    <span style={{
+      fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700,
+      color, padding: '2px 7px', background: `${color}18`,
+      borderRadius: 4, border: `1px solid ${color}30`,
+    }}>
+      {info.done}/{info.total}
+    </span>
+  )
+}
+
 function ClientCard({ client, onEdit, onFinance, onDelete }) {
   const def = SERVICE_TYPES[client.service]
   const next = getNextVisit(client.id)
@@ -109,6 +123,7 @@ function ClientCard({ client, onEdit, onFinance, onDelete }) {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
           {client.monthlyFee > 0 && <span style={S.metaTag}>{formatCurrency(client.monthlyFee)}/mês</span>}
           {next && <span style={S.metaTag}>Próx: {formatShortDate(next.date)}</span>}
+          <CycleChip client={client} color={def.color} />
         </div>
       </div>
       <div style={S.cardActions}>

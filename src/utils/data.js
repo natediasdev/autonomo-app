@@ -1,7 +1,7 @@
 import {
   addWeeks, startOfWeek, endOfWeek, isWithinInterval,
-  format, parseISO, isBefore, isAfter, addDays, getDay, setDay,
-  startOfMonth, endOfMonth, getMonth, getYear,
+  format, parseISO, isBefore, isAfter, addDays, setDay,
+  startOfMonth, endOfMonth, getMonth, getYear, differenceInWeeks,
 } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 
@@ -68,30 +68,62 @@ export const SERVICE_TYPES = {
 // If the client has a preferredWeekday, we anchor the first occurrence to that
 // weekday within the same week as startDate, then repeat every intervalWeeks.
 
-export function getVisitDates(client, weeksAhead = 12) {
+// ─── Visit date generation ────────────────────────────────────────────────────
+//
+// Projects ALL visits from startDate forward (index 0 = first visit ever).
+// This is the canonical sequence — cycles are derived by chunking this list.
+// weeksBack lets callers look into the past for cycle calculations.
+
+export function getVisitDates(client, weeksAhead = 12, weeksBack = 0) {
   const def = SERVICE_TYPES[client.service]
   if (!def) return []
 
-  const start   = typeof client.startDate === 'string' ? parseISO(client.startDate) : new Date(client.startDate)
-  const horizon = addWeeks(new Date(), weeksAhead)
+  const start = typeof client.startDate === 'string'
+    ? parseISO(client.startDate) : new Date(client.startDate)
 
-  // Anchor: if preferredWeekday is set, shift start to that weekday in the same week
+  // Anchor: respect preferredWeekday within the same week as startDate
   let anchor = new Date(start)
   if (client.preferredWeekday != null) {
-    // setDay with weekStartsOn:1 keeps us in the same Mon-anchored week
     anchor = setDay(start, client.preferredWeekday, { weekStartsOn: 1 })
-    // If the shift moved us before startDate, advance one cycle
     if (isBefore(anchor, start)) anchor = addWeeks(anchor, def.intervalWeeks)
   }
 
-  // Rewind to find the first cycle that could still be upcoming
-  let cursor = new Date(anchor)
-  while (isAfter(cursor, new Date())) cursor = addWeeks(cursor, -def.intervalWeeks)
-  while (isBefore(cursor, addDays(new Date(), -1))) cursor = addWeeks(cursor, def.intervalWeeks)
+  const past    = addWeeks(new Date(), -weeksBack)
+  const horizon = addWeeks(new Date(), weeksAhead)
 
   const results = []
+  let cursor = new Date(anchor)
   let safety = 0
-  while (isBefore(cursor, horizon) && safety < 200) {
+  while (isBefore(cursor, horizon) && safety < 500) {
+    safety++
+    if (!isBefore(cursor, past)) {
+      results.push(format(cursor, 'yyyy-MM-dd'))
+    }
+    cursor = addWeeks(cursor, def.intervalWeeks)
+  }
+  return results
+}
+
+// Returns ALL visits from the very beginning (for cycle math)
+export function getAllVisitDates(client) {
+  const def = SERVICE_TYPES[client.service]
+  if (!def) return []
+
+  const start = typeof client.startDate === 'string'
+    ? parseISO(client.startDate) : new Date(client.startDate)
+
+  let anchor = new Date(start)
+  if (client.preferredWeekday != null) {
+    anchor = setDay(start, client.preferredWeekday, { weekStartsOn: 1 })
+    if (isBefore(anchor, start)) anchor = addWeeks(anchor, def.intervalWeeks)
+  }
+
+  // Project 3 years forward (enough for any practical use)
+  const horizon = addWeeks(new Date(), 156)
+  const results = []
+  let cursor = new Date(anchor)
+  let safety = 0
+  while (isBefore(cursor, horizon) && safety < 2000) {
     safety++
     results.push(format(cursor, 'yyyy-MM-dd'))
     cursor = addWeeks(cursor, def.intervalWeeks)
@@ -234,40 +266,79 @@ export function deletePayment(id) {
   savePayments(getPayments().filter((p) => p.id !== id))
 }
 
-// ─── Cycle-based billing ────────────────────────────────────────────────────
+// ─── Cycle engine ────────────────────────────────────────────────────────────
 //
-// Instead of "months since start × fee", we count completed visit CYCLES.
-// A cycle = one full interval (semanal=1w, quinzenal=2w, mensal=4w).
-// Each completed cycle generates one charge. Payment covers cycles in order.
-// This means: if you paid for cycle 1-2, you're "in day" until cycle 3 completes.
+// A billing cycle = a fixed group of N visits starting from client.startDate.
+//   semanal:   N=4 visits (4 weeks = ~1 month)
+//   quinzenal: N=2 visits (2×2 weeks = ~1 month)
+//   mensal:    N=1 visit  (1×4 weeks = ~1 month)
+//
+// Cycles are numbered from 0: cycle 0 = visits[0..N-1], cycle 1 = visits[N..2N-1], etc.
+// A cycle is "due" when its LAST scheduled visit date has passed (regardless of completion).
+// This means: 5 Saturdays in a month → visits 1-4 = cycle 0, visit 5 = cycle 1 (not billed yet).
+//
+// Inadimplência persists across months: if cycle 0 was not paid, it stays overdue forever.
 
-function getCompletedCycles(client) {
-  const def = SERVICE_TYPES[client.service]
-  if (!def || !client.monthlyFee) return 0
+const CYCLE_SIZES = { semanal: 4, quinzenal: 2, mensal: 1 }
 
-  const visitDates = getVisitDates(client, 52) // look up to ~1yr ahead
+// Returns array of cycles for a client: each cycle has { index, visits[], dueDate, charged }
+export function getClientCycles(client) {
+  const N   = CYCLE_SIZES[client.service] || 1
+  const fee = client.monthlyFee || 0
+  const all = getAllVisitDates(client)
+  const now = new Date()
+
+  const cycles = []
+  for (let i = 0; i < all.length; i += N) {
+    const visits   = all.slice(i, i + N)
+    const dueDate  = parseISO(visits[visits.length - 1]) // last visit of cycle
+    const isDue    = !isAfter(dueDate, now)              // past = chargeable
+    if (!isDue) break                                    // future cycles not billed yet
+    cycles.push({ index: i / N, visits, dueDate, fee })
+  }
+  return cycles
+}
+
+// Current cycle info: which cycle are we in, how many visits done
+export function getCurrentCycleInfo(client) {
+  const N    = CYCLE_SIZES[client.service] || 1
+  const all  = getAllVisitDates(client)
+  const now  = new Date()
   const completions = getCompletions()
 
-  // Count how many visits have been completed (each = 1 cycle charge)
-  return visitDates.filter(orig => completions.includes(`${client.id}:${orig}`)).length
+  // Find the cycle whose window contains today
+  for (let i = 0; i < all.length; i += N) {
+    const visits   = all.slice(i, i + N)
+    const cycleEnd = parseISO(visits[visits.length - 1])
+    // This cycle is "current" if today <= cycleEnd or it's the last defined cycle
+    if (!isAfter(now, cycleEnd) || i + N >= all.length) {
+      const done = visits.filter(v => completions.includes(`${client.id}:${v}`)).length
+      return {
+        cycleIndex:  i / N,
+        total:       visits.length,
+        done,
+        visits,
+        cycleEndDate: visits[visits.length - 1],
+      }
+    }
+  }
+  return { cycleIndex: 0, total: N, done: 0, visits: [], cycleEndDate: null }
 }
 
 export function getClientBalance(client) {
-  const fee = client.monthlyFee || 0
+  const fee    = client.monthlyFee || 0
+  const cycles = getClientCycles(client)
+  const charged = cycles.length * fee
 
-  // Count completed cycles = how many charges generated
-  const completedCycles = getCompletedCycles(client)
-  const charged = completedCycles * fee
-
-  const paid = getPaymentsForClient(client.id).reduce((s, p) => s + p.amount, 0)
+  const paid    = getPaymentsForClient(client.id).reduce((s, p) => s + p.amount, 0)
   const balance = charged - paid
 
   return {
     charged,
     paid,
     balance,
-    overdue: balance > 0.005,
-    completedCycles,
+    overdue:        balance > 0.005,
+    completedCycles: cycles.length,
   }
 }
 
@@ -280,21 +351,14 @@ export function getFinancialSummary() {
   let totalExpectedMonth = 0, totalReceivedMonth = 0, totalDebt = 0, overdueCount = 0
 
   clients.forEach((client) => {
-    // Expected this month: visits completed this month × fee
-    const def = SERVICE_TYPES[client.service]
-    const fee = client.monthlyFee || 0
-    const visitDates = getVisitDates(client, 8)
-    const completions = getCompletions()
-
-    const completedThisMonth = visitDates.filter(orig => {
-      const effective = effectiveDate(client.id, orig)
-      try {
-        const d = parseISO(effective)
-        return isWithinInterval(d, { start: mStart, end: mEnd }) &&
-               completions.includes(`${client.id}:${orig}`)
-      } catch { return false }
-    }).length
-    totalExpectedMonth += completedThisMonth * fee
+    const fee    = client.monthlyFee || 0
+    // Cycles whose dueDate falls this month = expected revenue this month
+    const cycles = getClientCycles(client)
+    const cyclesThisMonth = cycles.filter(c => {
+      try { return isWithinInterval(c.dueDate, { start: mStart, end: mEnd }) }
+      catch { return false }
+    })
+    totalExpectedMonth += cyclesThisMonth.length * fee
 
     const payments = getPaymentsForClient(client.id)
     totalReceivedMonth += payments

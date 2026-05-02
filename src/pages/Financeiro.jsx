@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, Plus, Trash2, TrendingUp, X } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { getClients, getPaymentsForClient, addPayment, deletePayment, getClientBalance, formatCurrency, SERVICE_TYPES } from '../utils/data.js'
+import { getClients, getPaymentsForClient, addPayment, deletePayment, getClientBalance, getClientCycles, getCurrentCycleInfo, formatCurrency, SERVICE_TYPES } from '../utils/data.js'
 import ReciboDownload from '../components/Recibo.jsx'
 import { useCountUp, formatCurrencyBRL } from '../hooks/useCountUp.js'
 
@@ -36,7 +36,9 @@ export default function Financeiro() {
 
   if (!client) { navigate('/clientes'); return null }
 
-  const { charged, paid, balance, overdue } = getClientBalance(client)
+  const { charged, paid, balance, overdue, completedCycles } = getClientBalance(client)
+  const cycleInfo = getCurrentCycleInfo(client)
+  const cycles    = getClientCycles(client)
   const def = SERVICE_TYPES[client.service]
   const paidPct = charged > 0 ? Math.min(100, (paid / charged) * 100) : 0
 
@@ -102,6 +104,60 @@ export default function Financeiro() {
           </span>
         </div>
         <ProgressBar pct={paidPct} color={overdue ? '#FF6B6B' : 'var(--accent)'} />
+      </div>
+
+      {/* Cycle dashboard */}
+      <div style={S.cycleCard}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <span style={S.balanceLabel}>Ciclo atual</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: def.color }}>
+            #{cycleInfo.cycleIndex + 1}
+          </span>
+        </div>
+        {/* Dot progress */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          {Array.from({ length: cycleInfo.total }).map((_, i) => (
+            <div key={i} style={{
+              flex: 1, height: 6, borderRadius: 99,
+              background: i < cycleInfo.done ? def.color : 'var(--bg-4)',
+              transition: 'background 300ms',
+            }} />
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
+            {cycleInfo.done}/{cycleInfo.total} visitas concluídas
+          </span>
+          {cycleInfo.cycleEndDate && (
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+              Fecha {format(parseISO(cycleInfo.cycleEndDate), "d 'de' MMM", { locale: ptBR })}
+            </span>
+          )}
+        </div>
+        {/* Cycle history */}
+        {cycles.length > 0 && (
+          <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+            <span style={S.balanceLabel}>Ciclos cobrados</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+              {cycles.map((c, i) => {
+                const paidSoFar = paid - (cycles.slice(0, i).length * (client.monthlyFee || 0))
+                const cyclePaid = paidSoFar >= (client.monthlyFee || 0)
+                const cycEndLabel = format(c.dueDate, "d/MM", { locale: ptBR })
+                return (
+                  <span key={i} style={{
+                    fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
+                    padding: '3px 8px', borderRadius: 5,
+                    background: cyclePaid ? 'rgba(78,205,196,0.12)' : 'rgba(255,107,107,0.1)',
+                    border: `1px solid ${cyclePaid ? 'rgba(78,205,196,0.25)' : 'rgba(255,107,107,0.2)'}`,
+                    color: cyclePaid ? '#4ECDC4' : '#FF6B6B',
+                  }}>
+                    {cyclePaid ? '✓' : '!'} Ciclo {i + 1} · {cycEndLabel}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Add form */}
@@ -208,4 +264,5 @@ const S = {
   overlay:     { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 200 },
   sheet:       { position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '24px 20px calc(var(--nav-height) + 16px)', zIndex: 201 },
   confirmDelBtn:{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', background: '#FF6B6B', border: 'none', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  cycleCard:   { margin: '12px 20px 0', background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '14px' },
 }

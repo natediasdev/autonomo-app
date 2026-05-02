@@ -63,63 +63,58 @@ export const SERVICE_TYPES = {
   },
 }
 
-// ─── Schedule generation ──────────────────────────────────────────────────────
-//
-// If the client has a preferredWeekday, we anchor the first occurrence to that
-// weekday within the same week as startDate, then repeat every intervalWeeks.
-
 // ─── Visit date generation ────────────────────────────────────────────────────
 //
-// Projects ALL visits from startDate forward (index 0 = first visit ever).
-// This is the canonical sequence — cycles are derived by chunking this list.
-// weeksBack lets callers look into the past for cycle calculations.
+// THE canonical sequence starts from the client's actual startDate and goes
+// forward in time indefinitely. Both past and future visits are always included.
+// All cycle math, completion tracking, and agenda display derive from this list.
+//
+// anchor = first occurrence of preferredWeekday in or after startDate.
+// If no preferredWeekday, anchor = startDate itself.
 
-export function getVisitDates(client, weeksAhead = 12, weeksBack = 0) {
-  const def = SERVICE_TYPES[client.service]
-  if (!def) return []
-
+function buildAnchor(client) {
+  const def   = SERVICE_TYPES[client.service]
   const start = typeof client.startDate === 'string'
     ? parseISO(client.startDate) : new Date(client.startDate)
 
-  // Anchor: respect preferredWeekday within the same week as startDate
   let anchor = new Date(start)
   if (client.preferredWeekday != null) {
     anchor = setDay(start, client.preferredWeekday, { weekStartsOn: 1 })
+    // setDay may go backwards into the previous week — push forward one interval
     if (isBefore(anchor, start)) anchor = addWeeks(anchor, def.intervalWeeks)
   }
+  return anchor
+}
 
-  const past    = addWeeks(new Date(), -weeksBack)
+// All visits from startDate to weeksAhead weeks from now.
+// Includes past visits so completions are always resolvable.
+export function getVisitDates(client, weeksAhead = 12) {
+  const def = SERVICE_TYPES[client.service]
+  if (!def) return []
+
+  const anchor  = buildAnchor(client)
   const horizon = addWeeks(new Date(), weeksAhead)
 
   const results = []
   let cursor = new Date(anchor)
   let safety = 0
-  while (isBefore(cursor, horizon) && safety < 500) {
+  // Start from anchor (= client start), go all the way to horizon
+  while (isBefore(cursor, horizon) && safety < 2000) {
     safety++
-    if (!isBefore(cursor, past)) {
-      results.push(format(cursor, 'yyyy-MM-dd'))
-    }
+    results.push(format(cursor, 'yyyy-MM-dd'))
     cursor = addWeeks(cursor, def.intervalWeeks)
   }
   return results
 }
 
-// Returns ALL visits from the very beginning (for cycle math)
+// All visits ever — past + future (3 years ahead for cycle math).
+// This is the single source of truth for cycle indices.
 export function getAllVisitDates(client) {
   const def = SERVICE_TYPES[client.service]
   if (!def) return []
 
-  const start = typeof client.startDate === 'string'
-    ? parseISO(client.startDate) : new Date(client.startDate)
-
-  let anchor = new Date(start)
-  if (client.preferredWeekday != null) {
-    anchor = setDay(start, client.preferredWeekday, { weekStartsOn: 1 })
-    if (isBefore(anchor, start)) anchor = addWeeks(anchor, def.intervalWeeks)
-  }
-
-  // Project 3 years forward (enough for any practical use)
-  const horizon = addWeeks(new Date(), 156)
+  const anchor  = buildAnchor(client)
+  const horizon = addWeeks(new Date(), 156) // ~3 years forward
   const results = []
   let cursor = new Date(anchor)
   let safety = 0
@@ -164,8 +159,9 @@ export function getWeekAppointments(weekOffset = 0) {
   const appointments = []
 
   clients.forEach((client) => {
-    // We look ±4 extra weeks to catch rescheduled visits that land in this window
-    const dates = getVisitDates(client, 16)
+    // getVisitDates starts from client.startDate — all past visits included up to weeksAhead
+    // We project 20 weeks ahead to allow forward navigation
+    const dates = getVisitDates(client, 20)
 
     dates.forEach((originalDate) => {
       const displayDate = effectiveDate(client.id, originalDate)
@@ -299,30 +295,50 @@ export function getClientCycles(client) {
   return cycles
 }
 
-// Current cycle info: which cycle are we in, how many visits done
+// Current cycle info: which cycle are we in right now, how many visits done
 export function getCurrentCycleInfo(client) {
   const N    = CYCLE_SIZES[client.service] || 1
   const all  = getAllVisitDates(client)
   const now  = new Date()
+  const today = format(now, 'yyyy-MM-dd')
   const completions = getCompletions()
 
-  // Find the cycle whose window contains today
+  // Walk through cycles in order:
+  // A cycle is "current" if its FIRST visit has started and its LAST visit hasn't passed yet.
+  // Special case: if we're past the last cycle's end, show that last cycle.
+  let lastCycleStart = 0
   for (let i = 0; i < all.length; i += N) {
-    const visits   = all.slice(i, i + N)
-    const cycleEnd = parseISO(visits[visits.length - 1])
-    // This cycle is "current" if today <= cycleEnd or it's the last defined cycle
-    if (!isAfter(now, cycleEnd) || i + N >= all.length) {
+    const visits    = all.slice(i, i + N)
+    const cycleEnd  = visits[visits.length - 1]  // date string YYYY-MM-DD
+    const cycleStart = visits[0]
+
+    // Current cycle = started (first visit <= today) AND not ended (last visit >= today)
+    // OR this is the very next cycle (first visit > today, meaning we're between cycles)
+    if (cycleEnd >= today) {
       const done = visits.filter(v => completions.includes(`${client.id}:${v}`)).length
       return {
-        cycleIndex:  i / N,
-        total:       visits.length,
+        cycleIndex:   i / N,
+        total:        visits.length,
         done,
         visits,
-        cycleEndDate: visits[visits.length - 1],
+        cycleEndDate: cycleEnd,
+        cycleStartDate: cycleStart,
       }
     }
+    lastCycleStart = i
   }
-  return { cycleIndex: 0, total: N, done: 0, visits: [], cycleEndDate: null }
+
+  // All cycles have passed their end date — show the last one
+  const visits = all.slice(lastCycleStart, lastCycleStart + N)
+  const done   = visits.filter(v => completions.includes(`${client.id}:${v}`)).length
+  return {
+    cycleIndex:   lastCycleStart / N,
+    total:        visits.length,
+    done,
+    visits,
+    cycleEndDate:   visits[visits.length - 1] || null,
+    cycleStartDate: visits[0] || null,
+  }
 }
 
 export function getClientBalance(client) {
@@ -393,9 +409,12 @@ export function formatCurrency(value) {
 export function getNextVisit(clientId) {
   const client = getClients().find((c) => c.id === clientId)
   if (!client) return null
-  const dates = getVisitDates(client, 8)
-  if (!dates[0]) return null
-  return { date: effectiveDate(clientId, dates[0]) }
+  const dates  = getVisitDates(client, 12)
+  const today  = format(new Date(), 'yyyy-MM-dd')
+  // Find the first visit that is today or in the future
+  const next   = dates.find(d => effectiveDate(clientId, d) >= today)
+  if (!next) return null
+  return { date: effectiveDate(clientId, next) }
 }
 
 // ─── Visit Notes ──────────────────────────────────────────────────────────────

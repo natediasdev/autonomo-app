@@ -100,7 +100,7 @@ function CycleChip({ client, color }) {
 function ClientCard({ client, onEdit, onFinance, onDelete }) {
   const def = SERVICE_TYPES[client.service]
   const next = getNextVisit(client.id)
-  const { balance, overdue } = getClientBalance(client)
+  const { balance, overdue, totalCycles } = getClientBalance(client)
 
   return (
     <div style={{ ...S.card, borderColor: overdue ? 'rgba(255,107,107,0.22)' : 'var(--border)' }}>
@@ -112,6 +112,9 @@ function ClientCard({ client, onEdit, onFinance, onDelete }) {
             <span style={S.overdueBadge}>
               <AlertCircle size={10} />deve {formatCurrency(balance)}
             </span>
+          )}
+          {!overdue && totalCycles === 0 && (
+            <span style={S.pendingBadge}>aguardando</span>
           )}
         </div>
         <p style={S.clientName}>{client.name}</p>
@@ -182,4 +185,5 @@ const S = {
   emptyTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 },
   emptyText:    { fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, fontWeight: 300 },
   emptyBtn:     { marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', background: 'var(--accent)', color: 'var(--bg)', borderRadius: 'var(--r-md)', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, cursor: 'pointer', border: 'none' },
+  pendingBadge: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)', color: 'var(--text-3)', background: 'var(--bg-4)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' },
 }

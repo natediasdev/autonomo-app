@@ -1,12 +1,12 @@
 import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, ChevronRight, CheckCircle2, Circle, CalendarClock, X, MessageCircle, StickyNote } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CheckCircle2, Circle, CalendarClock, X, MessageCircle, StickyNote, SkipForward } from 'lucide-react'
 import { format, parseISO, isToday, addDays, startOfWeek, addWeeks } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import {
   getWeekAppointments, toggleCompletion, formatWeekRange,
   getFinancialSummary, formatCurrency, SERVICE_TYPES,
-  rescheduleVisit, clearReschedule,
+  rescheduleVisit, clearReschedule, skipVisitToNextWeek,
   getVisitNote, saveVisitNote,
   buildWhatsAppConfirmUrl, getClients,
 } from '../utils/data.js'
@@ -152,6 +152,7 @@ export default function Agenda() {
                   onReschedule={setRescheduleTarget}
                   onClearReschedule={(cId, orig) => { clearReschedule(cId, orig); setRefresh(r => r + 1) }}
                   onNote={setNoteTarget}
+                  onSkip={(cId, orig) => { skipVisitToNextWeek(cId, orig); setRefresh(r => r + 1) }}
                 />
               </motion.div>
             ))}
@@ -194,7 +195,7 @@ function SummaryTile({ label, node }) {
 
 // ─── Day group ────────────────────────────────────────────────────────────────
 
-function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearReschedule, onNote }) {
+function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearReschedule, onNote, onSkip }) {
   const parsed    = parseISO(date)
   const today     = isToday(parsed)
   const dayLabel  = format(parsed, 'EEEE', { locale: ptBR })
@@ -221,6 +222,7 @@ function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearR
             onReschedule={() => onReschedule({ id: appt.id, clientId: appt.clientId, originalDate: appt.originalDate, currentDate: appt.date })}
             onClearReschedule={() => onClearReschedule(appt.clientId, appt.originalDate)}
             onNote={() => onNote({ clientId: appt.clientId, originalDate: appt.originalDate, clientName: appt.clientName, date: appt.date })}
+            onSkip={() => onSkip(appt.clientId, appt.originalDate)}
           />
         ))}
       </div>
@@ -230,7 +232,7 @@ function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearR
 
 // ─── Appointment card ─────────────────────────────────────────────────────────
 
-function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule, onNote }) {
+function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule, onNote, onSkip }) {
   const def    = SERVICE_TYPES[appt.service]
   const note   = getVisitNote(appt.clientId, appt.originalDate)
   const client = getClients().find(c => c.id === appt.clientId)
@@ -260,6 +262,15 @@ function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule
               <a href={waUrl} target="_blank" rel="noopener noreferrer" style={S.iconBtn}>
                 <MessageCircle size={16} color="#25D366" />
               </a>
+            )}
+            {!done && (
+              <motion.button
+                style={S.iconBtn} onClick={onSkip}
+                title="Limpeza falhada — mover para próxima semana"
+                whileTap={{ scale: 0.85 }}
+              >
+                <SkipForward size={16} color="var(--text-3)" />
+              </motion.button>
             )}
             <button style={S.iconBtn} onClick={onNote}>
               <StickyNote size={16} color={note ? 'var(--accent)' : 'var(--text-3)'} />

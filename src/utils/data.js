@@ -128,6 +128,17 @@ export function getAllVisitDates(client) {
 
 // ─── Reschedule (one-off date override) ───────────────────────────────────────
 
+// ─── Skip visit (failed limpeza → move to next week same weekday) ─────────────
+
+export function skipVisitToNextWeek(clientId, originalDate) {
+  // Move the visit exactly 7 days forward (same weekday, next week)
+  const nextWeek = format(addWeeks(parseISO(originalDate), 1), 'yyyy-MM-dd')
+  const r = getReschedules()
+  r[`${clientId}:${originalDate}`] = nextWeek
+  saveReschedules(r)
+  return nextWeek
+}
+
 // key: `clientId:originalDate`  value: newDate string
 export function rescheduleVisit(clientId, originalDate, newDate) {
   const r = getReschedules()
@@ -264,33 +275,52 @@ export function deletePayment(id) {
 
 // ─── Cycle engine ────────────────────────────────────────────────────────────
 //
-// A billing cycle = a fixed group of N visits starting from client.startDate.
-//   semanal:   N=4 visits (4 weeks = ~1 month)
-//   quinzenal: N=2 visits (2×2 weeks = ~1 month)
-//   mensal:    N=1 visit  (1×4 weeks = ~1 month)
+// BILLING RULE: You charge BEFORE the work, as soon as a cycle begins.
 //
-// Cycles are numbered from 0: cycle 0 = visits[0..N-1], cycle 1 = visits[N..2N-1], etc.
-// A cycle is "due" when its LAST scheduled visit date has passed (regardless of completion).
-// This means: 5 Saturdays in a month → visits 1-4 = cycle 0, visit 5 = cycle 1 (not billed yet).
+// A cycle becomes billable the moment its FIRST visit date arrives (today >= firstVisit).
+// This means a brand-new client is already in debt from day 1 of their first cycle.
 //
-// Inadimplência persists across months: if cycle 0 was not paid, it stays overdue forever.
+// Accumulation: if cycle 1 wasn't paid when cycle 2 starts, client owes 2× fee.
+// Cycles never reset — unpaid balance persists indefinitely across months.
+//
+//   semanal:   N=4 visits per cycle (~monthly)
+//   quinzenal: N=2 visits per cycle (~monthly)
+//   mensal:    N=1 visit  per cycle (~monthly)
 
 const CYCLE_SIZES = { semanal: 4, quinzenal: 2, mensal: 1 }
 
-// Returns array of cycles for a client: each cycle has { index, visits[], dueDate, charged }
+// Returns ALL cycles that have started (firstVisitDate <= today).
+// Each cycle in the list = one fee charged, regardless of completion.
+// Status flags: isActive (current cycle), isOverdue (last visit passed, not paid).
+
 export function getClientCycles(client) {
-  const N   = CYCLE_SIZES[client.service] || 1
-  const fee = client.monthlyFee || 0
-  const all = getAllVisitDates(client)
-  const now = new Date()
+  const N     = CYCLE_SIZES[client.service] || 1
+  const fee   = client.monthlyFee || 0
+  const all   = getAllVisitDates(client)
+  const today = format(new Date(), 'yyyy-MM-dd')
 
   const cycles = []
   for (let i = 0; i < all.length; i += N) {
-    const visits   = all.slice(i, i + N)
-    const dueDate  = parseISO(visits[visits.length - 1]) // last visit of cycle
-    const isDue    = !isAfter(dueDate, now)              // past = chargeable
-    if (!isDue) break                                    // future cycles not billed yet
-    cycles.push({ index: i / N, visits, dueDate, fee })
+    const visits     = all.slice(i, i + N)
+    const firstVisit = visits[0]
+    const lastVisit  = visits[visits.length - 1]
+
+    // Cycle hasn't started yet — stop here
+    if (firstVisit > today) break
+
+    const isActive  = firstVisit <= today && lastVisit >= today
+    const isOverdue = lastVisit < today   // last visit passed = cycle closed
+
+    cycles.push({
+      index:      i / N,
+      visits,
+      firstVisit,
+      lastVisit,
+      dueDate:    parseISO(lastVisit),
+      fee,
+      isActive,
+      isOverdue,
+    })
   }
   return cycles
 }
@@ -342,19 +372,24 @@ export function getCurrentCycleInfo(client) {
 }
 
 export function getClientBalance(client) {
-  const fee    = client.monthlyFee || 0
-  const cycles = getClientCycles(client)
+  const fee     = client.monthlyFee || 0
+  const cycles  = getClientCycles(client)
   const charged = cycles.length * fee
 
   const paid    = getPaymentsForClient(client.id).reduce((s, p) => s + p.amount, 0)
   const balance = charged - paid
 
+  // Overdue as soon as any cycle has started and balance > 0
+  const overdue = cycles.length > 0 && balance > 0.005
+
   return {
     charged,
     paid,
     balance,
-    overdue:        balance > 0.005,
-    completedCycles: cycles.length,
+    overdue,
+    activeCycles:    cycles.filter(c => c.isActive).length,
+    completedCycles: cycles.filter(c => c.isOverdue).length,
+    totalCycles:     cycles.length,
   }
 }
 
@@ -363,17 +398,16 @@ export function getFinancialSummary() {
   const now     = new Date()
   const mStart  = startOfMonth(now)
   const mEnd    = endOfMonth(now)
+  const mStartStr = format(mStart, 'yyyy-MM-dd')
+  const mEndStr   = format(mEnd,   'yyyy-MM-dd')
 
   let totalExpectedMonth = 0, totalReceivedMonth = 0, totalDebt = 0, overdueCount = 0
 
   clients.forEach((client) => {
     const fee    = client.monthlyFee || 0
-    // Cycles whose dueDate falls this month = expected revenue this month
+    // Cycles whose FIRST visit falls this month = billed this month
     const cycles = getClientCycles(client)
-    const cyclesThisMonth = cycles.filter(c => {
-      try { return isWithinInterval(c.dueDate, { start: mStart, end: mEnd }) }
-      catch { return false }
-    })
+    const cyclesThisMonth = cycles.filter(c => c.firstVisit >= mStartStr && c.firstVisit <= mEndStr)
     totalExpectedMonth += cyclesThisMonth.length * fee
 
     const payments = getPaymentsForClient(client.id)

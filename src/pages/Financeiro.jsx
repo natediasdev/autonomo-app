@@ -36,7 +36,7 @@ export default function Financeiro() {
 
   if (!client) { navigate('/clientes'); return null }
 
-  const { charged, paid, balance, overdue, completedCycles } = getClientBalance(client)
+  const { charged, paid, balance, overdue, totalCycles, activeCycles, completedCycles } = getClientBalance(client)
   const cycleInfo = getCurrentCycleInfo(client)
   const cycles    = getClientCycles(client)
   const def = SERVICE_TYPES[client.service]
@@ -81,7 +81,7 @@ export default function Financeiro() {
         {[
           { label: 'Cobrado',  value: charged,          color: 'var(--text)' },
           { label: 'Pago',     value: paid,             color: 'var(--accent)' },
-          { label: 'Saldo',    value: Math.abs(balance), color: overdue ? '#FF6B6B' : 'var(--accent)', sub: overdue ? 'a receber' : 'em dia' },
+          { label: 'Saldo',    value: Math.abs(balance), color: overdue ? '#FF6B6B' : totalCycles === 0 ? 'var(--text-2)' : 'var(--accent)', sub: overdue ? 'a receber' : totalCycles === 0 ? 'aguardando' : 'em dia' },
         ].map(({ label, value, color, sub }) => (
           <motion.div
             key={label}
@@ -139,22 +139,29 @@ export default function Financeiro() {
           <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
             <span style={S.balanceLabel}>Ciclos cobrados</span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-              {cycles.map((c, i) => {
-                const paidSoFar = paid - (cycles.slice(0, i).length * (client.monthlyFee || 0))
-                const cyclePaid = paidSoFar >= (client.monthlyFee || 0)
-                const cycEndLabel = format(c.dueDate, "d/MM", { locale: ptBR })
-                return (
-                  <span key={i} style={{
-                    fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
-                    padding: '3px 8px', borderRadius: 5,
-                    background: cyclePaid ? 'rgba(78,205,196,0.12)' : 'rgba(255,107,107,0.1)',
-                    border: `1px solid ${cyclePaid ? 'rgba(78,205,196,0.25)' : 'rgba(255,107,107,0.2)'}`,
-                    color: cyclePaid ? '#4ECDC4' : '#FF6B6B',
-                  }}>
-                    {cyclePaid ? '✓' : '!'} Ciclo {i + 1} · {cycEndLabel}
-                  </span>
-                )
-              })}
+              {(() => {
+                // Distribute payments across cycles in order (oldest first)
+                let remaining = paid
+                return cycles.map((c, i) => {
+                  const fee = client.monthlyFee || 0
+                  const cyclePaid = remaining >= fee - 0.005
+                  remaining = Math.max(0, remaining - fee)
+                  const startLabel = format(parseISO(c.firstVisit), "d/MM", { locale: ptBR })
+                  const endLabel   = format(parseISO(c.lastVisit),  "d/MM", { locale: ptBR })
+                  const isActive   = c.isActive
+                  return (
+                    <span key={i} style={{
+                      fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
+                      padding: '3px 8px', borderRadius: 5,
+                      background: cyclePaid ? 'rgba(78,205,196,0.12)' : isActive ? 'rgba(232,255,71,0.1)' : 'rgba(255,107,107,0.1)',
+                      border: `1px solid ${cyclePaid ? 'rgba(78,205,196,0.25)' : isActive ? 'rgba(232,255,71,0.22)' : 'rgba(255,107,107,0.2)'}`,
+                      color: cyclePaid ? '#4ECDC4' : isActive ? 'var(--accent)' : '#FF6B6B',
+                    }}>
+                      {cyclePaid ? '✓' : isActive ? '●' : '!'} Ciclo {i + 1} · {startLabel}–{endLabel}
+                    </span>
+                  )
+                })
+              })()}
             </div>
           </div>
         )}

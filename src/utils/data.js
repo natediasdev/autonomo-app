@@ -301,9 +301,13 @@ export function getClientCycles(client) {
 
   const cycles = []
   for (let i = 0; i < all.length; i += N) {
-    const visits     = all.slice(i, i + N)
-    const firstVisit = visits[0]
-    const lastVisit  = visits[visits.length - 1]
+    const originalVisits  = all.slice(i, i + N)
+
+     // ← FIX: usar data efetiva (pós-skip/reschedule) para lógica de ciclo
+    const effectiveVisits = originalVisits.map(v => effectiveDate(client.id, v))
+
+    const firstVisit      = effectiveVisits[0]
+    const lastVisit       = effectiveVisits[effectiveVisits.length - 1]
 
     // Cycle hasn't started yet — stop here
     if (firstVisit > today) break
@@ -313,7 +317,8 @@ export function getClientCycles(client) {
 
     cycles.push({
       index:      i / N,
-      visits,
+      visits:      originalVisits,  // originais para lookup de completions
+      effectiveVisits,             // efetivas para datas de display/lógica
       firstVisit,
       lastVisit,
       dueDate:    parseISO(lastVisit),
@@ -338,20 +343,22 @@ export function getCurrentCycleInfo(client) {
   // Special case: if we're past the last cycle's end, show that last cycle.
   let lastCycleStart = 0
   for (let i = 0; i < all.length; i += N) {
-    const visits    = all.slice(i, i + N)
-    const cycleEnd  = visits[visits.length - 1]  // date string YYYY-MM-DD
-    const cycleStart = visits[0]
+    const originalVisits    = all.slice(i, i + N)
+    const effectiveVisits = originalVisits.map(v => effectiveDate(client.id, v))
+
+    const cycleEnd  = effectiveVisits[effectiveVisits.length - 1]  // date string YYYY-MM-DD
+    const cycleStart = effectiveVisits[0]
 
     // Current cycle = started (first visit <= today) AND not ended (last visit >= today)
     // OR this is the very next cycle (first visit > today, meaning we're between cycles)
     if (cycleEnd >= today) {
-      const done = visits.filter(v => completions.includes(`${client.id}:${v}`)).length
+      const done = originalVisits.filter(v => completions.includes(`${client.id}:${v}`)).length
       return {
         cycleIndex:   i / N,
-        total:        visits.length,
+        total:          originalVisits.length,
         done,
-        visits,
-        cycleEndDate: cycleEnd,
+        visits:         originalVisits,
+        cycleEndDate:   cycleEnd,
         cycleStartDate: cycleStart,
       }
     }
@@ -359,15 +366,16 @@ export function getCurrentCycleInfo(client) {
   }
 
   // All cycles have passed their end date — show the last one
-  const visits = all.slice(lastCycleStart, lastCycleStart + N)
-  const done   = visits.filter(v => completions.includes(`${client.id}:${v}`)).length
+  const originalVisits = all.slice(lastCycleStart, lastCycleStart + N)
+  const effectiveVisits = originalVisits.map(v => effectiveDate(client.id, v))
+  const done   = originalVisits.filter(v => completions.includes(`${client.id}:${v}`)).length
   return {
     cycleIndex:   lastCycleStart / N,
-    total:        visits.length,
+    total:          originalVisits.length,
     done,
-    visits,
-    cycleEndDate:   visits[visits.length - 1] || null,
-    cycleStartDate: visits[0] || null,
+    visits:         originalVisits,
+    cycleEndDate:   effectiveVisits[effectiveVisits.length - 1] || null,
+    cycleStartDate: effectiveVisits[0] || null,
   }
 }
 

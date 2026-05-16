@@ -10,7 +10,7 @@ import { ptBR } from 'date-fns/locale'
 const CLIENTS_KEY     = 'autonomo:clients'
 const COMPLETIONS_KEY = 'autonomo:completions'
 const PAYMENTS_KEY    = 'autonomo:payments'
-const RESCHEDULES_KEY = 'autonomo:reschedules'  // { [originalDate:clientId]: newDate }
+const RESCHEDULES_KEY = 'autonomo:reschedules'  // { [clientId:originalDate]: newDate }
 
 // ─── Storage helpers ──────────────────────────────────────────────────────────
 
@@ -31,7 +31,6 @@ export const saveReschedules = (v) => localStorage.setItem(RESCHEDULES_KEY, JSON
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// date-fns uses 0=Sun … 6=Sat; we expose Mon–Sun for the UI
 export const WEEKDAYS = [
   { value: 1, label: 'Segunda' },
   { value: 2, label: 'Terça'   },
@@ -64,13 +63,6 @@ export const SERVICE_TYPES = {
 }
 
 // ─── Visit date generation ────────────────────────────────────────────────────
-//
-// THE canonical sequence starts from the client's actual startDate and goes
-// forward in time indefinitely. Both past and future visits are always included.
-// All cycle math, completion tracking, and agenda display derive from this list.
-//
-// anchor = first occurrence of preferredWeekday in or after startDate.
-// If no preferredWeekday, anchor = startDate itself.
 
 function buildAnchor(client) {
   const def   = SERVICE_TYPES[client.service]
@@ -80,14 +72,11 @@ function buildAnchor(client) {
   let anchor = new Date(start)
   if (client.preferredWeekday != null) {
     anchor = setDay(start, client.preferredWeekday, { weekStartsOn: 1 })
-    // setDay may go backwards into the previous week — push forward one interval
     if (isBefore(anchor, start)) anchor = addWeeks(anchor, def.intervalWeeks)
   }
   return anchor
 }
 
-// All visits from startDate to weeksAhead weeks from now.
-// Includes past visits so completions are always resolvable.
 export function getVisitDates(client, weeksAhead = 12) {
   const def = SERVICE_TYPES[client.service]
   if (!def) return []
@@ -98,7 +87,6 @@ export function getVisitDates(client, weeksAhead = 12) {
   const results = []
   let cursor = new Date(anchor)
   let safety = 0
-  // Start from anchor (= client start), go all the way to horizon
   while (isBefore(cursor, horizon) && safety < 2000) {
     safety++
     results.push(format(cursor, 'yyyy-MM-dd'))
@@ -107,8 +95,6 @@ export function getVisitDates(client, weeksAhead = 12) {
   return results
 }
 
-// All visits ever — past + future (3 years ahead for cycle math).
-// This is the single source of truth for cycle indices.
 export function getAllVisitDates(client) {
   const def = SERVICE_TYPES[client.service]
   if (!def) return []
@@ -126,36 +112,85 @@ export function getAllVisitDates(client) {
   return results
 }
 
-// ─── Reschedule (one-off date override) ───────────────────────────────────────
+// ─── Reschedule helpers ───────────────────────────────────────────────────────
 
-// ─── Skip visit (failed limpeza → move to next week same weekday) ─────────────
-
-export function skipVisitToNextWeek(clientId, originalDate) {
-  // Move the visit exactly 7 days forward (same weekday, next week)
-  const nextWeek = format(addWeeks(parseISO(originalDate), 1), 'yyyy-MM-dd')
+// Returns the effective (possibly rescheduled) date for a single original visit.
+// Supports chaining: if the effective date was itself rescheduled, follows the chain.
+// Max depth = 20 to prevent cycles.
+function effectiveDate(clientId, originalDate) {
   const r = getReschedules()
-  r[`${clientId}:${originalDate}`] = nextWeek
-  saveReschedules(r)
-  return nextWeek
+  let current = originalDate
+  let depth = 0
+  while (r[`${clientId}:${current}`] && depth < 20) {
+    current = r[`${clientId}:${current}`]
+    depth++
+  }
+  return current
 }
 
 // key: `clientId:originalDate`  value: newDate string
+// Isolated reschedule — only moves this single occurrence.
 export function rescheduleVisit(clientId, originalDate, newDate) {
   const r = getReschedules()
-  r[`${clientId}:${originalDate}`] = newDate
+  // Always write against the true original key so chaining works correctly.
+  // Find the original key that points (directly or via chain) to the current effective date.
+  const trueOriginal = _findOriginalKey(clientId, originalDate)
+  r[`${clientId}:${trueOriginal}`] = newDate
   saveReschedules(r)
+}
+
+// Given a date that may be an effective (rescheduled) date, walks back to find
+// the original canonical date that produced it.
+function _findOriginalKey(clientId, date) {
+  const r = getReschedules()
+  // If this key already exists as an original → it IS the original.
+  if (r[`${clientId}:${date}`] !== undefined) return date
+  // Otherwise, check if any key maps to this date — if so, that key is the original.
+  const entry = Object.entries(r).find(
+    ([k, v]) => k.startsWith(`${clientId}:`) && v === date
+  )
+  if (entry) return entry[0].replace(`${clientId}:`, '')
+  // Not found in reschedules → it's an unmodified original date.
+  return date
 }
 
 export function clearReschedule(clientId, originalDate) {
   const r = getReschedules()
-  delete r[`${clientId}:${originalDate}`]
+  // Clear the chain starting from the original key
+  const trueOriginal = _findOriginalKey(clientId, originalDate)
+  delete r[`${clientId}:${trueOriginal}`]
   saveReschedules(r)
 }
 
-// Returns the effective date for a visit (may be overridden by a reschedule)
-function effectiveDate(clientId, originalDate) {
+// ─── Skip visit in cascade (+7 days on failed visit AND all subsequent visits) ─
+//
+// Example: original series [18/04, 02/05, 16/05, 30/05]
+// Skip 02/05 → effective series becomes [18/04, 09/05, 23/05, 06/06]
+// The skipped visit and every visit after it shifts +7 days.
+//
+// Implementation: we write one reschedule entry per affected original date.
+// Existing reschedules on affected dates are offset by +7 on top of their
+// current effective date (so cascades stack correctly on multiple skips).
+
+export function skipVisitToNextWeek(clientId, originalDate) {
+  const client = getClients().find(c => c.id === clientId)
+  if (!client) return
+
+  const all = getAllVisitDates(client)
+  const idx = all.indexOf(originalDate)
+  if (idx === -1) return
+
+  // All original dates from the skipped visit onwards
+  const affected = all.slice(idx)
+
   const r = getReschedules()
-  return r[`${clientId}:${originalDate}`] || originalDate
+  affected.forEach((orig) => {
+    const key = `${clientId}:${orig}`
+    // Shift the current effective date by +7 days
+    const current = r[key] || orig
+    r[key] = format(addWeeks(parseISO(current), 1), 'yyyy-MM-dd')
+  })
+  saveReschedules(r)
 }
 
 // ─── Week view ────────────────────────────────────────────────────────────────
@@ -170,8 +205,6 @@ export function getWeekAppointments(weekOffset = 0) {
   const appointments = []
 
   clients.forEach((client) => {
-    // getVisitDates starts from client.startDate — all past visits included up to weeksAhead
-    // We project 20 weeks ahead to allow forward navigation
     const dates = getVisitDates(client, 20)
 
     dates.forEach((originalDate) => {
@@ -179,7 +212,7 @@ export function getWeekAppointments(weekOffset = 0) {
       const date = parseISO(displayDate)
       if (!isWithinInterval(date, { start: weekStart, end: weekEnd })) return
 
-      const id = `${client.id}:${originalDate}`   // ID always uses original date
+      const id = `${client.id}:${originalDate}`
       const rescheduled = displayDate !== originalDate
 
       appointments.push({
@@ -240,7 +273,6 @@ export function updateClient(id, data) {
 export function deleteClient(id) {
   saveClients(getClients().filter((c) => c.id !== id))
   savePayments(getPayments().filter((p) => p.clientId !== id))
-  // Clean up reschedules for this client
   const r = getReschedules()
   Object.keys(r).forEach(k => { if (k.startsWith(`${id}:`)) delete r[k] })
   saveReschedules(r)
@@ -273,25 +305,13 @@ export function deletePayment(id) {
   savePayments(getPayments().filter((p) => p.id !== id))
 }
 
-// ─── Cycle engine ────────────────────────────────────────────────────────────
+// ─── Cycle engine ─────────────────────────────────────────────────────────────
 //
-// BILLING RULE: You charge BEFORE the work, as soon as a cycle begins.
-//
-// A cycle becomes billable the moment its FIRST visit date arrives (today >= firstVisit).
-// This means a brand-new client is already in debt from day 1 of their first cycle.
-//
-// Accumulation: if cycle 1 wasn't paid when cycle 2 starts, client owes 2× fee.
-// Cycles never reset — unpaid balance persists indefinitely across months.
-//
-//   semanal:   N=4 visits per cycle (~monthly)
-//   quinzenal: N=2 visits per cycle (~monthly)
-//   mensal:    N=1 visit  per cycle (~monthly)
+// BILLING RULE: charge as soon as a cycle's FIRST visit arrives.
+// Uses effective dates (post-reschedule/skip) for all timing logic.
+// Completions always use the original date as key.
 
 const CYCLE_SIZES = { semanal: 4, quinzenal: 2, mensal: 1 }
-
-// Returns ALL cycles that have started (firstVisitDate <= today).
-// Each cycle in the list = one fee charged, regardless of completion.
-// Status flags: isActive (current cycle), isOverdue (last visit passed, not paid).
 
 export function getClientCycles(client) {
   const N     = CYCLE_SIZES[client.service] || 1
@@ -302,26 +322,24 @@ export function getClientCycles(client) {
   const cycles = []
   for (let i = 0; i < all.length; i += N) {
     const originalVisits  = all.slice(i, i + N)
-
-     // ← FIX: usar data efetiva (pós-skip/reschedule) para lógica de ciclo
     const effectiveVisits = originalVisits.map(v => effectiveDate(client.id, v))
 
-    const firstVisit      = effectiveVisits[0]
-    const lastVisit       = effectiveVisits[effectiveVisits.length - 1]
+    const firstVisit = effectiveVisits[0]
+    const lastVisit  = effectiveVisits[effectiveVisits.length - 1]
 
-    // Cycle hasn't started yet — stop here
+    // Cycle hasn't started yet — stop
     if (firstVisit > today) break
 
     const isActive  = firstVisit <= today && lastVisit >= today
-    const isOverdue = lastVisit < today   // last visit passed = cycle closed
+    const isOverdue = lastVisit < today
 
     cycles.push({
-      index:      i / N,
-      visits:      originalVisits,  // originais para lookup de completions
-      effectiveVisits,             // efetivas para datas de display/lógica
+      index: i / N,
+      visits: originalVisits,       // originals for completion lookup
+      effectiveVisits,              // effective for display / timing logic
       firstVisit,
       lastVisit,
-      dueDate:    parseISO(lastVisit),
+      dueDate: parseISO(lastVisit),
       fee,
       isActive,
       isOverdue,
@@ -330,31 +348,26 @@ export function getClientCycles(client) {
   return cycles
 }
 
-// Current cycle info: which cycle are we in right now, how many visits done
 export function getCurrentCycleInfo(client) {
-  const N    = CYCLE_SIZES[client.service] || 1
-  const all  = getAllVisitDates(client)
-  const now  = new Date()
-  const today = format(now, 'yyyy-MM-dd')
+  const N           = CYCLE_SIZES[client.service] || 1
+  const all         = getAllVisitDates(client)
+  const today       = format(new Date(), 'yyyy-MM-dd')
   const completions = getCompletions()
 
-  // Walk through cycles in order:
-  // A cycle is "current" if its FIRST visit has started and its LAST visit hasn't passed yet.
-  // Special case: if we're past the last cycle's end, show that last cycle.
-  let lastCycleStart = 0
+  let lastIdx = 0
   for (let i = 0; i < all.length; i += N) {
-    const originalVisits    = all.slice(i, i + N)
+    const originalVisits  = all.slice(i, i + N)
     const effectiveVisits = originalVisits.map(v => effectiveDate(client.id, v))
 
-    const cycleEnd  = effectiveVisits[effectiveVisits.length - 1]  // date string YYYY-MM-DD
     const cycleStart = effectiveVisits[0]
+    const cycleEnd   = effectiveVisits[effectiveVisits.length - 1]
 
-    // Current cycle = started (first visit <= today) AND not ended (last visit >= today)
-    // OR this is the very next cycle (first visit > today, meaning we're between cycles)
     if (cycleEnd >= today) {
-      const done = originalVisits.filter(v => completions.includes(`${client.id}:${v}`)).length
+      const done = originalVisits.filter(v =>
+        completions.includes(`${client.id}:${v}`)
+      ).length
       return {
-        cycleIndex:   i / N,
+        cycleIndex:     i / N,
         total:          originalVisits.length,
         done,
         visits:         originalVisits,
@@ -362,15 +375,17 @@ export function getCurrentCycleInfo(client) {
         cycleStartDate: cycleStart,
       }
     }
-    lastCycleStart = i
+    lastIdx = i
   }
 
-  // All cycles have passed their end date — show the last one
-  const originalVisits = all.slice(lastCycleStart, lastCycleStart + N)
+  // Fallback: last cycle
+  const originalVisits  = all.slice(lastIdx, lastIdx + N)
   const effectiveVisits = originalVisits.map(v => effectiveDate(client.id, v))
-  const done   = originalVisits.filter(v => completions.includes(`${client.id}:${v}`)).length
+  const done = originalVisits.filter(v =>
+    completions.includes(`${client.id}:${v}`)
+  ).length
   return {
-    cycleIndex:   lastCycleStart / N,
+    cycleIndex:     lastIdx / N,
     total:          originalVisits.length,
     done,
     visits:         originalVisits,
@@ -380,14 +395,12 @@ export function getCurrentCycleInfo(client) {
 }
 
 export function getClientBalance(client) {
-  const fee     = client.monthlyFee || 0
-  const cycles  = getClientCycles(client)
+  const fee    = client.monthlyFee || 0
+  const cycles = getClientCycles(client)
   const charged = cycles.length * fee
 
   const paid    = getPaymentsForClient(client.id).reduce((s, p) => s + p.amount, 0)
   const balance = charged - paid
-
-  // Overdue as soon as any cycle has started and balance > 0
   const overdue = cycles.length > 0 && balance > 0.005
 
   return {
@@ -402,10 +415,10 @@ export function getClientBalance(client) {
 }
 
 export function getFinancialSummary() {
-  const clients = getClients()
-  const now     = new Date()
-  const mStart  = startOfMonth(now)
-  const mEnd    = endOfMonth(now)
+  const clients   = getClients()
+  const now       = new Date()
+  const mStart    = startOfMonth(now)
+  const mEnd      = endOfMonth(now)
   const mStartStr = format(mStart, 'yyyy-MM-dd')
   const mEndStr   = format(mEnd,   'yyyy-MM-dd')
 
@@ -413,14 +426,18 @@ export function getFinancialSummary() {
 
   clients.forEach((client) => {
     const fee    = client.monthlyFee || 0
-    // Cycles whose FIRST visit falls this month = billed this month
     const cycles = getClientCycles(client)
-    const cyclesThisMonth = cycles.filter(c => c.firstVisit >= mStartStr && c.firstVisit <= mEndStr)
+    const cyclesThisMonth = cycles.filter(
+      c => c.firstVisit >= mStartStr && c.firstVisit <= mEndStr
+    )
     totalExpectedMonth += cyclesThisMonth.length * fee
 
     const payments = getPaymentsForClient(client.id)
     totalReceivedMonth += payments
-      .filter((p) => { try { return isWithinInterval(parseISO(p.date), { start: mStart, end: mEnd }) } catch { return false } })
+      .filter((p) => {
+        try { return isWithinInterval(parseISO(p.date), { start: mStart, end: mEnd }) }
+        catch { return false }
+      })
       .reduce((s, p) => s + p.amount, 0)
 
     const { balance, overdue } = getClientBalance(client)
@@ -451,17 +468,16 @@ export function formatCurrency(value) {
 export function getNextVisit(clientId) {
   const client = getClients().find((c) => c.id === clientId)
   if (!client) return null
-  const dates  = getVisitDates(client, 12)
-  const today  = format(new Date(), 'yyyy-MM-dd')
-  // Find the first visit that is today or in the future
-  const next   = dates.find(d => effectiveDate(clientId, d) >= today)
+  const dates = getVisitDates(client, 12)
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const next  = dates.find(d => effectiveDate(clientId, d) >= today)
   if (!next) return null
   return { date: effectiveDate(clientId, next) }
 }
 
 // ─── Visit Notes ──────────────────────────────────────────────────────────────
 
-const NOTES_KEY = 'autonomo:notes'  // { [clientId:originalDate]: string }
+const NOTES_KEY = 'autonomo:notes'
 
 function getNotes() { return load(NOTES_KEY, {}) }
 function saveNotes(v) { localStorage.setItem(NOTES_KEY, JSON.stringify(v)) }
@@ -483,7 +499,6 @@ export function saveVisitNote(clientId, originalDate, text) {
 // ─── Monthly Report ───────────────────────────────────────────────────────────
 
 export function getMonthlyReport(year, month) {
-  // month: 0-indexed (Jan=0)
   const clients  = getClients()
   const payments = getPayments()
   const notes    = getNotes()
@@ -500,7 +515,6 @@ export function getMonthlyReport(year, month) {
     const fee = client.monthlyFee || 0
     totalExpected += fee
 
-    // Payments in this month
     const monthPayments = payments.filter((p) => {
       if (p.clientId !== client.id) return false
       try {
@@ -511,7 +525,6 @@ export function getMonthlyReport(year, month) {
     const received = monthPayments.reduce((s, p) => s + p.amount, 0)
     totalReceived += received
 
-    // Visits in this month (using completions)
     const completions = getCompletions()
     const visitDates  = getVisitDates(client, 16)
     const monthVisits = visitDates.filter((orig) => {
@@ -531,12 +544,12 @@ export function getMonthlyReport(year, month) {
     if (overdue) overdueClients.push({ name: client.name, balance })
 
     clientDetails.push({
-      id:         client.id,
-      name:       client.name,
-      service:    client.service,
+      id:          client.id,
+      name:        client.name,
+      service:     client.service,
       fee,
       received,
-      visits:     doneVisits.length,
+      visits:      doneVisits.length,
       totalVisits: monthVisits.length,
       overdue,
       balance,

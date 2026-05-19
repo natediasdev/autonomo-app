@@ -1,7 +1,7 @@
 import {
-  addWeeks, startOfWeek, endOfWeek, isWithinInterval,
-  format, parseISO, isBefore, addDays, setDay,
-  startOfMonth, endOfMonth, differenceInWeeks,
+  addWeeks, subWeeks, startOfWeek, endOfWeek, isWithinInterval,
+  format, parseISO, isBefore, setDay,
+  startOfMonth, endOfMonth,
 } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 
@@ -113,16 +113,18 @@ export function getVisitDates(client, weeksAhead = 12) {
 // ─── Effective date resolution ────────────────────────────────────────────────
 //
 // reschedules = { "clientId:originalDate": effectiveDate }
-// Each key maps directly to its current effective date.
-// Multiple skips on the same visit simply overwrite the same key.
+// Each originalDate key maps directly to its current effective date.
+// Multiple skips on the same visit just overwrite the same key.
 
 function effectiveDate(clientId, originalDate) {
   const r = getReschedules()
   return r[`${clientId}:${originalDate}`] || originalDate
 }
 
-// ─── Isolated reschedule (calendar icon) ─────────────────────────────────────
-// Moves only this single occurrence. Does NOT affect subsequent visits.
+// ─── Isolated reschedule — calendar icon ─────────────────────────────────────
+// Moves only this single occurrence within the same week.
+// Does NOT affect subsequent visits.
+// "Voltar ao dia original" calls clearIsolatedReschedule (see below).
 
 export function rescheduleVisit(clientId, originalDate, newDate) {
   const r = getReschedules()
@@ -130,13 +132,15 @@ export function rescheduleVisit(clientId, originalDate, newDate) {
   saveReschedules(r)
 }
 
+// Clears ONLY the isolated reschedule for one visit — used by the calendar icon
+// "Voltar ao dia original" button. Does not touch other visits.
 export function clearReschedule(clientId, originalDate) {
   const r = getReschedules()
   delete r[`${clientId}:${originalDate}`]
   saveReschedules(r)
 }
 
-// ─── Cascade skip (arrow icon) ────────────────────────────────────────────────
+// ─── Cascade skip — arrow icon ────────────────────────────────────────────────
 //
 // Shifts the target visit +7 days AND every subsequent visit by +7 days.
 // Calling this multiple times stacks: 2 skips = +14 days total shift.
@@ -144,9 +148,6 @@ export function clearReschedule(clientId, originalDate) {
 // Example (quinzenal): original = [18/abr, 02/mai, 16/mai, 30/mai]
 //   skip #1 on 02/mai → effective = [18/abr, 09/mai, 23/mai, 06/jun]
 //   skip #2 on 02/mai → effective = [18/abr, 16/mai, 30/mai, 13/jun]
-//
-// The UI always passes appt.originalDate (canonical), so repeated skips
-// on the same appointment correctly accumulate on the same key.
 
 export function skipVisitToNextWeek(clientId, originalDate) {
   const client = getClients().find(c => c.id === clientId)
@@ -158,12 +159,49 @@ export function skipVisitToNextWeek(clientId, originalDate) {
 
   const r = getReschedules()
 
-  // Shift every visit from the skipped one onwards by +7 days
   for (let i = idx; i < all.length; i++) {
     const orig = all[i]
     const key  = `${clientId}:${orig}`
     const currentEffective = r[key] || orig
     r[key] = format(addWeeks(parseISO(currentEffective), 1), 'yyyy-MM-dd')
+  }
+
+  saveReschedules(r)
+}
+
+// ─── Cascade undo — "movido" X button ────────────────────────────────────────
+//
+// Undoes ONE skip layer from the target visit and all subsequent visits (-7 days).
+// If after subtracting 7 days the effective date equals the original canonical
+// date, the key is deleted (clean storage, no ghost entries).
+//
+// Example (quinzenal, after 2 skips):
+//   effective = [18/abr, 16/mai, 30/mai, 13/jun]
+//   undoCascadeSkip on 02/mai → effective = [18/abr, 09/mai, 23/mai, 06/jun]
+//   undoCascadeSkip on 02/mai again → all keys removed, back to original
+
+export function undoCascadeSkip(clientId, originalDate) {
+  const client = getClients().find(c => c.id === clientId)
+  if (!client) return
+
+  const all = getAllVisitDates(client)
+  const idx = all.indexOf(originalDate)
+  if (idx === -1) return
+
+  const r = getReschedules()
+
+  for (let i = idx; i < all.length; i++) {
+    const orig = all[i]
+    const key  = `${clientId}:${orig}`
+    const currentEffective = r[key] || orig
+    const undone = format(subWeeks(parseISO(currentEffective), 1), 'yyyy-MM-dd')
+
+    if (undone === orig) {
+      // Back to canonical — clean up the key
+      delete r[key]
+    } else {
+      r[key] = undone
+    }
   }
 
   saveReschedules(r)
@@ -181,7 +219,6 @@ export function getWeekAppointments(weekOffset = 0) {
   const appointments = []
 
   clients.forEach((client) => {
-    // Wide window so skipped visits that land far out are still found
     const dates = getVisitDates(client, 28)
 
     dates.forEach((originalDate) => {
@@ -189,7 +226,6 @@ export function getWeekAppointments(weekOffset = 0) {
       const date = parseISO(displayDate)
       if (!isWithinInterval(date, { start: weekStart, end: weekEnd })) return
 
-      // ID always uses the canonical original date
       const id = `${client.id}:${originalDate}`
       const rescheduled = displayDate !== originalDate
 
@@ -199,7 +235,7 @@ export function getWeekAppointments(weekOffset = 0) {
         clientName:  client.name,
         clientPhone: client.phone,
         service:     client.service,
-        originalDate,        // canonical, never changes — used for skip/note/completion keys
+        originalDate,
         date:        displayDate,
         rescheduled,
         done:        completions.includes(id),
@@ -285,13 +321,6 @@ export function deletePayment(id) {
 }
 
 // ─── Cycle engine ─────────────────────────────────────────────────────────────
-//
-// BILLING RULE: charge as soon as a cycle's FIRST effective visit arrives.
-// Uses effective dates for timing; original dates for completion lookup.
-//
-//   semanal:   4 visits per cycle
-//   quinzenal: 2 visits per cycle
-//   mensal:    1 visit  per cycle
 
 const CYCLE_SIZES = { semanal: 4, quinzenal: 2, mensal: 1 }
 
@@ -309,7 +338,6 @@ export function getClientCycles(client) {
     const firstVisit = effectiveVisits[0]
     const lastVisit  = effectiveVisits[effectiveVisits.length - 1]
 
-    // Cycle hasn't started yet — stop
     if (firstVisit > today) break
 
     const isActive  = firstVisit <= today && lastVisit >= today
@@ -317,8 +345,8 @@ export function getClientCycles(client) {
 
     cycles.push({
       index: i / N,
-      visits: originalVisits,   // originals → completion lookup
-      effectiveVisits,          // effectives → display / timing
+      visits: originalVisits,
+      effectiveVisits,
       firstVisit,
       lastVisit,
       dueDate: parseISO(lastVisit),
@@ -359,7 +387,6 @@ export function getCurrentCycleInfo(client) {
     lastIdx = i
   }
 
-  // Fallback: show last cycle
   const originalVisits  = all.slice(lastIdx, lastIdx + N)
   const effectiveVisits = originalVisits.map(v => effectiveDate(client.id, v))
   const done = originalVisits.filter(v =>

@@ -63,19 +63,26 @@ export default function Clientes() {
       <AnimatePresence>
         {confirmDel && (
           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={S.overlay} onClick={() => setConfirmDel(null)} />
             <motion.div
-              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-              transition={{ type: 'spring', stiffness: 360, damping: 32 }}
-              style={S.sheet}
-            >
-              <p style={S.modalTitle}>Remover cliente?</p>
-              <p style={S.modalText}>Pagamentos vinculados também serão apagados.</p>
-              <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-                <button style={S.cancelBtn} onClick={() => setConfirmDel(null)}>Cancelar</button>
-                <button style={S.confirmBtn} onClick={() => handleDelete(confirmDel)}>Remover</button>
-              </div>
-            </motion.div>
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              style={S.overlay}
+              onClick={() => setConfirmDel(null)}
+            />
+            {/* Sheet: inset 0 + alignItems flex-end — no left:50%+transform */}
+            <div style={S.sheetWrapper}>
+              <motion.div
+                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                transition={{ type: 'spring', stiffness: 360, damping: 32 }}
+                style={S.sheet}
+              >
+                <p style={S.modalTitle}>Remover cliente?</p>
+                <p style={S.modalText}>Pagamentos vinculados também serão apagados.</p>
+                <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+                  <button style={S.cancelBtn} onClick={() => setConfirmDel(null)}>Cancelar</button>
+                  <button style={S.confirmBtn} onClick={() => handleDelete(confirmDel)}>Remover</button>
+                </div>
+              </motion.div>
+            </div>
           </>
         )}
       </AnimatePresence>
@@ -175,8 +182,10 @@ const S = {
   metaTag:      { fontSize: 11, color: 'var(--text-3)', background: 'var(--bg-4)', borderRadius: 4, padding: '2px 7px' },
   cardActions:  { display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)' },
   actionBtn:    { flex: 1, minWidth: 44, padding: '0 14px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'none', border: 'none' },
+  // Sheet positioning fixed for Android: inset 0 + flexbox instead of left:50%+transform
   overlay:      { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 200 },
-  sheet:        { position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '24px 20px calc(var(--nav-height) + 16px)', zIndex: 201 },
+  sheetWrapper: { position: 'fixed', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 201, pointerEvents: 'none' },
+  sheet:        { width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '24px 20px calc(var(--nav-height) + 16px)', pointerEvents: 'auto' },
   modalTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 },
   modalText:    { fontSize: 14, color: 'var(--text-2)', marginTop: 8 },
   cancelBtn:    { flex: 1, padding: '13px', borderRadius: 'var(--r-md)', background: 'var(--bg-4)', border: '1px solid var(--border)', color: 'var(--text-2)', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, cursor: 'pointer' },

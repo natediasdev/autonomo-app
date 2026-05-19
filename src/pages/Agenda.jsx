@@ -6,7 +6,7 @@ import { ptBR } from 'date-fns/locale'
 import {
   getWeekAppointments, toggleCompletion, formatWeekRange,
   getFinancialSummary, formatCurrency, SERVICE_TYPES,
-  rescheduleVisit, clearReschedule, skipVisitToNextWeek,
+  rescheduleVisit, clearReschedule, undoCascadeSkip, skipVisitToNextWeek,
   getVisitNote, saveVisitNote,
   buildWhatsAppConfirmUrl, getClients,
 } from '../utils/data.js'
@@ -150,9 +150,19 @@ export default function Agenda() {
                   onToggle={handleToggle}
                   isDone={isDone}
                   onReschedule={setRescheduleTarget}
-                  onClearReschedule={(cId, orig) => { clearReschedule(cId, orig); setRefresh(r => r + 1) }}
+                  onClearReschedule={(cId, orig) => {
+                    clearReschedule(cId, orig)
+                    setRefresh(r => r + 1)
+                  }}
+                  onUndoSkip={(cId, orig) => {
+                    undoCascadeSkip(cId, orig)
+                    setRefresh(r => r + 1)
+                  }}
                   onNote={setNoteTarget}
-                  onSkip={(cId, orig) => { skipVisitToNextWeek(cId, orig); setRefresh(r => r + 1) }}
+                  onSkip={(cId, orig) => {
+                    skipVisitToNextWeek(cId, orig)
+                    setRefresh(r => r + 1)
+                  }}
                 />
               </motion.div>
             ))}
@@ -195,7 +205,7 @@ function SummaryTile({ label, node }) {
 
 // ─── Day group ────────────────────────────────────────────────────────────────
 
-function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearReschedule, onNote, onSkip }) {
+function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearReschedule, onUndoSkip, onNote, onSkip }) {
   const parsed    = parseISO(date)
   const today     = isToday(parsed)
   const dayLabel  = format(parsed, 'EEEE', { locale: ptBR })
@@ -221,6 +231,7 @@ function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearR
             onToggle={() => onToggle(appt.id)}
             onReschedule={() => onReschedule({ id: appt.id, clientId: appt.clientId, originalDate: appt.originalDate, currentDate: appt.date })}
             onClearReschedule={() => onClearReschedule(appt.clientId, appt.originalDate)}
+            onUndoSkip={() => onUndoSkip(appt.clientId, appt.originalDate)}
             onNote={() => onNote({ clientId: appt.clientId, originalDate: appt.originalDate, clientName: appt.clientName, date: appt.date })}
             onSkip={() => onSkip(appt.clientId, appt.originalDate)}
           />
@@ -231,8 +242,14 @@ function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearR
 }
 
 // ─── Appointment card ─────────────────────────────────────────────────────────
+//
+// "movido" tag behaviour:
+//   - Shown whenever displayDate !== originalDate (both isolated and cascade skips)
+//   - X button calls onUndoSkip (cascade undo, -7 days on this visit + all subsequent)
+//   - The calendar icon handles isolated reschedule (same week, different day)
+//     with its own "Voltar ao dia original" inside the sheet
 
-function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule, onNote, onSkip }) {
+function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule, onUndoSkip, onNote, onSkip }) {
   const def    = SERVICE_TYPES[appt.service]
   const note   = getVisitNote(appt.clientId, appt.originalDate)
   const client = getClients().find(c => c.id === appt.clientId)
@@ -252,7 +269,8 @@ function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule
             {appt.rescheduled && (
               <span style={S.rescheduledTag}>
                 <CalendarClock size={10} />movido
-                <button style={S.clearBtn} onClick={onClearReschedule}><X size={9} /></button>
+                {/* X undoes one cascade skip layer (-7 days in cascade) */}
+                <button style={S.clearBtn} onClick={onUndoSkip}><X size={9} /></button>
               </span>
             )}
             {note && <span style={S.noteChip}><StickyNote size={10} />obs</span>}
@@ -296,6 +314,8 @@ function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule
 }
 
 // ─── Bottom sheet wrapper ─────────────────────────────────────────────────────
+// Uses left:0 right:0 + margin:auto instead of left:50%+transform
+// to avoid Android rendering bugs with nested transforms.
 
 function Sheet({ children, onClose }) {
   return (
@@ -304,7 +324,6 @@ function Sheet({ children, onClose }) {
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         style={S.overlay} onClick={onClose}
       />
-      {/* Wrapper handles centering — motion.div only handles y animation */}
       <div style={S.sheetWrapper}>
         <motion.div
           initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
@@ -442,8 +461,9 @@ const S = {
   iconBtn:      { background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 4 },
   clientName:   { fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em' },
   notePreview:  { fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, background: 'var(--bg-3)', borderRadius: 6, padding: '6px 10px', borderLeft: '2px solid var(--accent)' },
+  // Overlay + sheet: avoid left:50%+transform (Android bug), use inset 0 + maxWidth + margin auto
   overlay:      { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 200 },
-  sheetWrapper: { position: 'fixed', bottom: 0, left: 0, right: 0, display: 'flex', justifyContent: 'center', zIndex: 201, pointerEvents: 'none' },
+  sheetWrapper: { position: 'fixed', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 201, pointerEvents: 'none' },
   sheet:        { width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '20px 20px calc(var(--nav-height) + 16px)', pointerEvents: 'auto' },
   sheetHeader:  { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
   sheetTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800 },

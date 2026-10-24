@@ -20,10 +20,12 @@ export default function ClientForm({ initialData = {}, onSubmit, title, submitLa
 
   const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }))
 
+  const isOcasional = form.service === 'ocasional'
+
   const validate = () => {
     const e = {}
     if (!form.name.trim()) e.name = 'Nome obrigatório'
-    if (!form.startDate)   e.startDate = 'Data de início obrigatória'
+    if (!isOcasional && !form.startDate) e.startDate = 'Data de início obrigatória'
     return e
   }
 
@@ -32,7 +34,10 @@ export default function ClientForm({ initialData = {}, onSubmit, title, submitLa
     if (Object.keys(e).length > 0) { setErrors(e); return }
     onSubmit({
       ...form,
-      preferredWeekday: form.preferredWeekday !== '' ? Number(form.preferredWeekday) : null,
+      preferredWeekday: (!isOcasional && form.preferredWeekday !== '')
+        ? Number(form.preferredWeekday) : null,
+      monthlyFee: isOcasional ? 0 : form.monthlyFee,
+      startDate:  isOcasional ? null : form.startDate,
     })
   }
 
@@ -50,7 +55,7 @@ export default function ClientForm({ initialData = {}, onSubmit, title, submitLa
         {/* Name */}
         <Field label="Nome do cliente" error={errors.name}>
           <input
-            style={{ ...styles.input, borderColor: errors.name ? '#FF6B6B' : 'var(--border)' }}
+            style={{ ...styles.input, borderColor: errors.name ? 'var(--danger)' : 'var(--border)' }}
             value={form.name}
             onChange={set('name')}
             placeholder="Ex: João da Silva"
@@ -69,19 +74,6 @@ export default function ClientForm({ initialData = {}, onSubmit, title, submitLa
           />
         </Field>
 
-        {/* Monthly fee */}
-        <Field label="Mensalidade (R$)">
-          <input
-            style={styles.input}
-            value={form.monthlyFee}
-            onChange={set('monthlyFee')}
-            placeholder="Ex: 150,00"
-            type="number"
-            inputMode="decimal"
-            min="0"
-          />
-        </Field>
-
         {/* Service frequency */}
         <Field label="Frequência do serviço">
           <div style={styles.serviceOptions}>
@@ -92,7 +84,7 @@ export default function ClientForm({ initialData = {}, onSubmit, title, submitLa
                 style={{
                   ...styles.serviceOption,
                   borderColor: form.service === key ? def.color : 'var(--border)',
-                  background:  form.service === key ? `${def.color}12` : 'var(--bg-3)',
+                  background:  form.service === key ? `${def.color}15` : 'var(--bg-3)',
                 }}
               >
                 <span style={{ ...styles.dot, background: def.color }} />
@@ -107,59 +99,88 @@ export default function ClientForm({ initialData = {}, onSubmit, title, submitLa
           </div>
         </Field>
 
-        {/* Preferred weekday */}
-        <Field label="Dia preferido da semana">
-          <div style={styles.weekdayGrid}>
-            {/* "Sem preferência" option */}
-            <button
-              onClick={() => setForm(f => ({ ...f, preferredWeekday: '' }))}
-              style={{
-                ...styles.dayBtn,
-                gridColumn: 'span 2',
-                borderColor: form.preferredWeekday === '' ? 'var(--accent)' : 'var(--border)',
-                background:  form.preferredWeekday === '' ? 'var(--accent-dim)' : 'var(--bg-3)',
-                color:       form.preferredWeekday === '' ? 'var(--accent)' : 'var(--text-3)',
-              }}
-            >
-              Qualquer dia
-            </button>
-            {WEEKDAYS.map(({ value, label }) => {
-              const active = form.preferredWeekday === String(value)
-              return (
-                <button
-                  key={value}
-                  onClick={() => setForm(f => ({ ...f, preferredWeekday: String(value) }))}
-                  style={{
-                    ...styles.dayBtn,
-                    borderColor: active ? 'var(--accent)' : 'var(--border)',
-                    background:  active ? 'var(--accent-dim)' : 'var(--bg-3)',
-                    color:       active ? 'var(--accent)' : 'var(--text-2)',
-                    fontWeight:  active ? 700 : 400,
-                  }}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-          {form.preferredWeekday !== '' && (
-            <p style={styles.weekdayHint}>
-              As visitas serão sempre agendadas nas{' '}
-              <strong>{WEEKDAYS.find(d => String(d.value) === form.preferredWeekday)?.label}s</strong>.
-              Você pode mover individualmente pela agenda.
-            </p>
-          )}
-        </Field>
+        {/* Monthly fee — hidden for ocasional */}
+        {!isOcasional && (
+          <Field label="Mensalidade (R$)">
+            <input
+              style={styles.input}
+              value={form.monthlyFee}
+              onChange={set('monthlyFee')}
+              placeholder="Ex: 150,00"
+              type="number"
+              inputMode="decimal"
+              min="0"
+            />
+          </Field>
+        )}
 
-        {/* Start date */}
-        <Field label="Data de início" error={errors.startDate}>
-          <input
-            style={{ ...styles.input, borderColor: errors.startDate ? '#FF6B6B' : 'var(--border)' }}
-            value={form.startDate}
-            onChange={set('startDate')}
-            type="date"
-          />
-        </Field>
+        {/* Ocasional info banner */}
+        {isOcasional && (
+          <div style={styles.infoBanner}>
+            <span style={styles.infoDot}>●</span>
+            <p style={styles.infoText}>
+              Clientes ocasionais não têm cadência fixa. Você agenda cada visita manualmente
+              na tela de financeiro. O valor é definido por visita.
+            </p>
+          </div>
+        )}
+
+        {/* Preferred weekday — hidden for ocasional */}
+        {!isOcasional && (
+          <Field label="Dia preferido da semana">
+            <div style={styles.weekdayGrid}>
+              <button
+                onClick={() => setForm(f => ({ ...f, preferredWeekday: '' }))}
+                style={{
+                  ...styles.dayBtn,
+                  gridColumn: 'span 2',
+                  borderColor: form.preferredWeekday === '' ? 'var(--accent)' : 'var(--border)',
+                  background:  form.preferredWeekday === '' ? 'var(--accent-dim)' : 'var(--bg-3)',
+                  color:       form.preferredWeekday === '' ? 'var(--accent)' : 'var(--text-3)',
+                }}
+              >
+                Qualquer dia
+              </button>
+              {WEEKDAYS.map(({ value, label }) => {
+                const active = form.preferredWeekday === String(value)
+                return (
+                  <button
+                    key={value}
+                    onClick={() => setForm(f => ({ ...f, preferredWeekday: String(value) }))}
+                    style={{
+                      ...styles.dayBtn,
+                      borderColor: active ? 'var(--accent)' : 'var(--border)',
+                      background:  active ? 'var(--accent-dim)' : 'var(--bg-3)',
+                      color:       active ? 'var(--accent)' : 'var(--text-2)',
+                      fontWeight:  active ? 700 : 400,
+                    }}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+            {form.preferredWeekday !== '' && (
+              <p style={styles.weekdayHint}>
+                As visitas serão sempre agendadas nas{' '}
+                <strong>{WEEKDAYS.find(d => String(d.value) === form.preferredWeekday)?.label}s</strong>.
+                Você pode mover individualmente pela agenda.
+              </p>
+            )}
+          </Field>
+        )}
+
+        {/* Start date — hidden for ocasional */}
+        {!isOcasional && (
+          <Field label="Data de início" error={errors.startDate}>
+            <input
+              style={{ ...styles.input, borderColor: errors.startDate ? 'var(--danger)' : 'var(--border)' }}
+              value={form.startDate}
+              onChange={set('startDate')}
+              type="date"
+            />
+          </Field>
+        )}
 
         <button style={styles.submitBtn} onClick={handleSubmit}>
           {submitLabel}
@@ -180,7 +201,7 @@ function Field({ label, error, children }) {
 }
 
 const styles = {
-  page: { minHeight: '100%' },
+  page:   { minHeight: '100%' },
   header: {
     padding: '52px 20px 0',
     display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
@@ -193,23 +214,23 @@ const styles = {
   },
   title: {
     fontFamily: 'var(--font-display)', fontSize: 20,
-    fontWeight: 800, letterSpacing: '-0.02em',
+    fontWeight: 800, letterSpacing: '-0.02em', color: 'var(--text)',
   },
-  form: { padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: 20 },
-  field: { display: 'flex', flexDirection: 'column', gap: 8 },
-  label: {
+  form:   { padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: 20 },
+  field:  { display: 'flex', flexDirection: 'column', gap: 8 },
+  label:  {
     fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 700,
     textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-2)',
   },
-  input: {
+  input:  {
     background: 'var(--bg-3)', border: '1px solid var(--border)',
     borderRadius: 'var(--r-md)', padding: '14px 16px',
     color: 'var(--text)', fontSize: 15, width: '100%',
-    transition: 'border-color 150ms', colorScheme: 'dark',
+    transition: 'border-color 150ms', colorScheme: 'dark light',
   },
-  error: { fontSize: 12, color: '#FF6B6B' },
+  error:  { fontSize: 12, color: 'var(--danger)' },
   serviceOptions: { display: 'flex', flexDirection: 'column', gap: 8 },
-  serviceOption: {
+  serviceOption:  {
     display: 'flex', alignItems: 'center', gap: 14,
     padding: '14px 16px', borderRadius: 'var(--r-md)',
     border: '1px solid', cursor: 'pointer',
@@ -223,10 +244,16 @@ const styles = {
     fontWeight: 700, transition: 'color 200ms',
   },
   optionDesc: { fontSize: 12, color: 'var(--text-3)' },
+  infoBanner: {
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+    padding: '14px 16px', borderRadius: 'var(--r-md)',
+    background: 'rgba(167,139,250,0.10)',
+    border: '1px solid rgba(167,139,250,0.25)',
+  },
+  infoDot:  { color: '#A78BFA', fontSize: 16, lineHeight: 1.4, flexShrink: 0 },
+  infoText: { fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 },
   weekdayGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(4, 1fr)',
-    gap: 8,
+    display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8,
   },
   dayBtn: {
     padding: '10px 4px', borderRadius: 'var(--r-sm)',
@@ -234,11 +261,8 @@ const styles = {
     fontFamily: 'var(--font-display)', fontSize: 12,
     transition: 'all 150ms', background: 'none',
   },
-  weekdayHint: {
-    fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5,
-    marginTop: 4,
-  },
-  submitBtn: {
+  weekdayHint: { fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, marginTop: 4 },
+  submitBtn:  {
     padding: '16px', borderRadius: 'var(--r-md)',
     background: 'var(--accent)', color: 'var(--bg)',
     fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 800,

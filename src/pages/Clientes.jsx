@@ -1,15 +1,19 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, ChevronRight, Trash2, Phone, AlertCircle } from 'lucide-react'
-import { getClients, deleteClient, SERVICE_TYPES, getNextVisit, formatShortDate, getClientBalance, getCurrentCycleInfo, formatCurrency } from '../utils/data.js'
+import { Plus, ChevronRight, Trash2, Phone, AlertCircle, PauseCircle } from 'lucide-react'
+import {
+  getClients, deleteClient, SERVICE_TYPES,
+  getNextVisit, formatShortDate, getClientBalance,
+  getCurrentCycleInfo, formatCurrency, isClientPaused,
+  getOccasionsForClient,
+} from '../utils/data.js'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 
 export default function Clientes() {
   const navigate = useNavigate()
   const [clients, setClients] = useState(getClients)
   const [confirmDel, setConfirmDel] = useState(null)
-  const [loaded] = useState(true)
 
   const handleDelete = (id) => {
     deleteClient(id)
@@ -24,18 +28,13 @@ export default function Clientes() {
           <h1 style={S.title}>Clientes</h1>
           <p style={S.subtitle}>{clients.length} cadastrado{clients.length !== 1 ? 's' : ''}</p>
         </div>
-        <motion.button
-          style={S.addBtn} onClick={() => navigate('/clientes/novo')}
-          whileTap={{ scale: 0.9 }} transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-        >
+        <motion.button style={S.addBtn} onClick={() => navigate('/clientes/novo')} whileTap={{ scale: 0.9 }}>
           <Plus size={20} strokeWidth={2.5} />
         </motion.button>
       </div>
 
       <div style={S.content}>
-        {!loaded ? (
-          [0,1,2].map(i => <SkeletonCard key={i} />)
-        ) : clients.length === 0 ? (
+        {clients.length === 0 ? (
           <EmptyClientes onAdd={() => navigate('/clientes/novo')} />
         ) : (
           <motion.div
@@ -63,12 +62,7 @@ export default function Clientes() {
       <AnimatePresence>
         {confirmDel && (
           <>
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              style={S.overlay}
-              onClick={() => setConfirmDel(null)}
-            />
-            {/* Sheet: inset 0 + alignItems flex-end — no left:50%+transform */}
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={S.overlay} onClick={() => setConfirmDel(null)} />
             <div style={S.sheetWrapper}>
               <motion.div
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
@@ -76,7 +70,7 @@ export default function Clientes() {
                 style={S.sheet}
               >
                 <p style={S.modalTitle}>Remover cliente?</p>
-                <p style={S.modalText}>Pagamentos vinculados também serão apagados.</p>
+                <p style={S.modalText}>Pagamentos e visitas vinculados também serão apagados.</p>
                 <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
                   <button style={S.cancelBtn} onClick={() => setConfirmDel(null)}>Cancelar</button>
                   <button style={S.confirmBtn} onClick={() => handleDelete(confirmDel)}>Remover</button>
@@ -92,35 +86,57 @@ export default function Clientes() {
 
 function CycleChip({ client, color }) {
   const info = getCurrentCycleInfo(client)
-  if (!info || info.total === 0) return null
+  if (!info) return null
+
+  if (client.service === 'ocasional') {
+    const occasions = getOccasionsForClient(client.id)
+    if (occasions.length === 0) return null
+    const done = occasions.filter(o => o.done).length
+    return (
+      <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color, padding: '2px 7px', background: `${color}18`, borderRadius: 4, border: `1px solid ${color}30` }}>
+        {done}/{occasions.length} visitas
+      </span>
+    )
+  }
+
+  if (info.total === 0) return null
   return (
-    <span style={{
-      fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700,
-      color, padding: '2px 7px', background: `${color}18`,
-      borderRadius: 4, border: `1px solid ${color}30`,
-    }}>
+    <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color, padding: '2px 7px', background: `${color}18`, borderRadius: 4, border: `1px solid ${color}30` }}>
       {info.done}/{info.total}
     </span>
   )
 }
 
 function ClientCard({ client, onEdit, onFinance, onDelete }) {
-  const def = SERVICE_TYPES[client.service]
-  const next = getNextVisit(client.id)
+  const def    = SERVICE_TYPES[client.service]
+  const next   = getNextVisit(client.id)
+  const paused = isClientPaused(client)
   const { balance, overdue, totalCycles } = getClientBalance(client)
 
+  const isOcasional = client.service === 'ocasional'
+  const occasions   = isOcasional ? getOccasionsForClient(client.id) : []
+
   return (
-    <div style={{ ...S.card, borderColor: overdue ? 'rgba(255,107,107,0.22)' : 'var(--border)' }}>
+    <div style={{
+      ...S.card,
+      borderColor: paused ? 'rgba(167,139,250,0.22)' : overdue ? 'rgba(255,107,107,0.22)' : 'var(--border)',
+      opacity: paused ? 0.75 : 1,
+    }}>
       <div style={S.cardLeft} onClick={onEdit}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: def.color, flexShrink: 0, display: 'inline-block' }} />
           <span style={{ ...S.serviceLabel, color: def.color }}>{def.label}</span>
-          {overdue && (
+          {paused && (
+            <span style={S.pausedBadge}>
+              <PauseCircle size={10} />pausado
+            </span>
+          )}
+          {!paused && overdue && (
             <span style={S.overdueBadge}>
               <AlertCircle size={10} />deve {formatCurrency(balance)}
             </span>
           )}
-          {!overdue && totalCycles === 0 && (
+          {!paused && !overdue && totalCycles === 0 && !isOcasional && (
             <span style={S.pendingBadge}>aguardando</span>
           )}
         </div>
@@ -131,13 +147,18 @@ function ClientCard({ client, onEdit, onFinance, onDelete }) {
           </a>
         )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
-          {client.monthlyFee > 0 && <span style={S.metaTag}>{formatCurrency(client.monthlyFee)}/mês</span>}
+          {!isOcasional && client.monthlyFee > 0 && (
+            <span style={S.metaTag}>{formatCurrency(client.monthlyFee)}/mês</span>
+          )}
+          {isOcasional && occasions.length > 0 && (
+            <span style={S.metaTag}>{occasions.length} visita{occasions.length !== 1 ? 's' : ''}</span>
+          )}
           {next && <span style={S.metaTag}>Próx: {formatShortDate(next.date)}</span>}
           <CycleChip client={client} color={def.color} />
         </div>
       </div>
       <div style={S.cardActions}>
-        <button style={S.actionBtn} onClick={onDelete}><Trash2 size={14} color="#FF6B6B" /></button>
+        <button style={S.actionBtn} onClick={onDelete}><Trash2 size={14} color="var(--danger)" /></button>
         <button style={{ ...S.actionBtn, borderTop: '1px solid var(--border)' }} onClick={onFinance}>
           <span style={{ fontSize: 12, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>R$</span>
         </button>
@@ -169,30 +190,30 @@ function EmptyClientes({ onAdd }) {
 
 const S = {
   header:       { padding: '16px 20px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
-  title:        { fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1 },
+  title:        { fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1, color: 'var(--text)' },
   subtitle:     { fontSize: 13, color: 'var(--text-2)', marginTop: 4, fontWeight: 300 },
   addBtn:       { width: 44, height: 44, borderRadius: 'var(--r-md)', background: 'var(--accent)', color: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: 'none', marginTop: 4, flexShrink: 0 },
   content:      { padding: '20px' },
-  card:         { background: 'var(--bg-2)', border: '1px solid', borderRadius: 'var(--r-md)', display: 'flex', overflow: 'hidden', transition: 'border-color 200ms' },
+  card:         { background: 'var(--bg-2)', border: '1px solid', borderRadius: 'var(--r-md)', display: 'flex', overflow: 'hidden', transition: 'border-color 200ms, opacity 200ms' },
   cardLeft:     { flex: 1, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 5, cursor: 'pointer' },
   serviceLabel: { fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.06em' },
-  overdueBadge: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)', color: '#FF6B6B', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.2)', borderRadius: 4, padding: '1px 6px' },
-  clientName:   { fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, letterSpacing: '-0.01em' },
+  overdueBadge: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)', color: 'var(--danger)', background: 'var(--danger-dim)', border: '1px solid var(--danger-border)', borderRadius: 4, padding: '1px 6px' },
+  pausedBadge:  { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)', color: '#A78BFA', background: 'rgba(167,139,250,0.10)', border: '1px solid rgba(167,139,250,0.25)', borderRadius: 4, padding: '1px 6px' },
+  pendingBadge: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)', color: 'var(--text-3)', background: 'var(--bg-4)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' },
+  clientName:   { fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text)' },
   phone:        { fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 5 },
   metaTag:      { fontSize: 11, color: 'var(--text-3)', background: 'var(--bg-4)', borderRadius: 4, padding: '2px 7px' },
   cardActions:  { display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)' },
   actionBtn:    { flex: 1, minWidth: 44, padding: '0 14px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'none', border: 'none' },
-  // Sheet positioning fixed for Android: inset 0 + flexbox instead of left:50%+transform
-  overlay:      { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 200 },
+  overlay:      { position: 'fixed', inset: 0, background: 'var(--overlay)', zIndex: 200 },
   sheetWrapper: { position: 'fixed', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 201, pointerEvents: 'none' },
   sheet:        { width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '24px 20px calc(var(--nav-height) + 16px)', pointerEvents: 'auto' },
-  modalTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 },
+  modalTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text)' },
   modalText:    { fontSize: 14, color: 'var(--text-2)', marginTop: 8 },
   cancelBtn:    { flex: 1, padding: '13px', borderRadius: 'var(--r-md)', background: 'var(--bg-4)', border: '1px solid var(--border)', color: 'var(--text-2)', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
-  confirmBtn:   { flex: 1, padding: '13px', borderRadius: 'var(--r-md)', background: '#FF6B6B', border: 'none', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  confirmBtn:   { flex: 1, padding: '13px', borderRadius: 'var(--r-md)', background: 'var(--danger)', border: 'none', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   empty:        { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '60px 32px', gap: 12, textAlign: 'center' },
-  emptyTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 },
+  emptyTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text)' },
   emptyText:    { fontSize: 14, color: 'var(--text-2)', lineHeight: 1.6, fontWeight: 300 },
   emptyBtn:     { marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', background: 'var(--accent)', color: 'var(--bg)', borderRadius: 'var(--r-md)', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, cursor: 'pointer', border: 'none' },
-  pendingBadge: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)', color: 'var(--text-3)', background: 'var(--bg-4)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' },
 }

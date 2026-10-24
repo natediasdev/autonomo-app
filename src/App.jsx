@@ -6,9 +6,11 @@ import NovoCliente from './pages/NovoCliente.jsx'
 import EditarCliente from './pages/EditarCliente.jsx'
 import Financeiro from './pages/Financeiro.jsx'
 import Relatorio from './pages/Relatorio.jsx'
+import { useTheme } from './hooks/useTheme.js'
 import { useAndroidBack } from './hooks/useAndroidBack.js'
 
 function AppRoutes() {
+  useTheme()
   useAndroidBack()
   return (
     <Layout>

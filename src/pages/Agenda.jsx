@@ -4,16 +4,13 @@ import { ChevronLeft, ChevronRight, CheckCircle2, Circle, CalendarClock, X, Mess
 import { format, parseISO, isToday, addDays, startOfWeek, addWeeks } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import {
-  getWeekAppointments, toggleCompletion, formatWeekRange,
-  getFinancialSummary, formatCurrency, SERVICE_TYPES,
+  getWeekAppointments, toggleCompletion, toggleOccasionDone,
+  formatWeekRange, getFinancialSummary, SERVICE_TYPES,
   rescheduleVisit, clearReschedule, undoCascadeSkip, skipVisitToNextWeek,
-  getVisitNote, saveVisitNote,
-  buildWhatsAppConfirmUrl, getClients,
+  getVisitNote, saveVisitNote, buildWhatsAppConfirmUrl, getClients,
 } from '../utils/data.js'
 import { useCountUp, formatCurrencyBRL } from '../hooks/useCountUp.js'
 import { SkeletonCard } from '../components/Skeleton.jsx'
-
-// ─── Animated currency tile ───────────────────────────────────────────────────
 
 function AnimatedCurrency({ value, color }) {
   const animated = useCountUp(value ?? 0, 900)
@@ -23,8 +20,6 @@ function AnimatedCurrency({ value, color }) {
     </span>
   )
 }
-
-// ─── Animated progress bar ────────────────────────────────────────────────────
 
 function ProgressBar({ pct, color }) {
   return (
@@ -39,8 +34,6 @@ function ProgressBar({ pct, color }) {
   )
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 export default function Agenda() {
   const [weekOffset, setWeekOffset]   = useState(0)
   const [completions, setCompletions] = useState(() => {
@@ -49,7 +42,6 @@ export default function Agenda() {
   const [rescheduleTarget, setRescheduleTarget] = useState(null)
   const [noteTarget, setNoteTarget]             = useState(null)
   const [refresh, setRefresh]                   = useState(0)
-  const [loading]                               = useState(false)
 
   const { appointments, weekStart, weekEnd } = getWeekAppointments(weekOffset)
   const summary = getFinancialSummary()
@@ -61,8 +53,13 @@ export default function Agenda() {
   }, {})
   const dates = Object.keys(grouped).sort()
 
-  const handleToggle = useCallback((id) => {
-    setCompletions(toggleCompletion(id))
+  const handleToggle = useCallback((appt) => {
+    if (appt.isOccasion) {
+      toggleOccasionDone(appt.id)
+      setRefresh(r => r + 1)
+    } else {
+      setCompletions(toggleCompletion(appt.id))
+    }
   }, [])
 
   const handleReschedule = (newDate) => {
@@ -79,8 +76,9 @@ export default function Agenda() {
     setRefresh(r => r + 1)
   }
 
-  const isDone    = (id) => completions.includes(id)
-  const totalDone = appointments.filter(a => isDone(a.id)).length
+  const isDone = (appt) => appt.isOccasion ? appt.done : completions.includes(appt.id)
+
+  const totalDone = appointments.filter(a => isDone(a)).length
   const totalAll  = appointments.length
   const donePct   = totalAll > 0 ? (totalDone / totalAll) * 100 : 0
 
@@ -90,7 +88,10 @@ export default function Agenda() {
       <div style={S.header}>
         <div>
           <p style={S.subtitle}>
-            {weekOffset === 0 ? 'Esta semana' : weekOffset === 1 ? 'Próxima semana' : weekOffset === -1 ? 'Semana passada' : formatWeekRange(weekStart, weekEnd)}
+            {weekOffset === 0 ? 'Esta semana'
+              : weekOffset === 1 ? 'Próxima semana'
+              : weekOffset === -1 ? 'Semana passada'
+              : formatWeekRange(weekStart, weekEnd)}
           </p>
         </div>
         {totalAll > 0 && (
@@ -114,7 +115,7 @@ export default function Agenda() {
           <div style={S.divider} />
           <SummaryTile
             label={`${summary.overdueCount} inadimpl.`}
-            node={<AnimatedCurrency value={summary.totalDebt} color={summary.totalDebt > 0 ? '#FF6B6B' : 'var(--text)'} />}
+            node={<AnimatedCurrency value={summary.totalDebt} color={summary.totalDebt > 0 ? 'var(--danger)' : 'var(--text)'} />}
           />
         </motion.div>
       )}
@@ -128,9 +129,7 @@ export default function Agenda() {
 
       {/* Content */}
       <div style={S.content}>
-        {loading ? (
-          [0,1,2].map(i => <SkeletonCard key={i} />)
-        ) : dates.length === 0 ? (
+        {dates.length === 0 ? (
           <EmptyAgenda weekOffset={weekOffset} />
         ) : (
           <motion.div
@@ -150,19 +149,10 @@ export default function Agenda() {
                   onToggle={handleToggle}
                   isDone={isDone}
                   onReschedule={setRescheduleTarget}
-                  onClearReschedule={(cId, orig) => {
-                    clearReschedule(cId, orig)
-                    setRefresh(r => r + 1)
-                  }}
-                  onUndoSkip={(cId, orig) => {
-                    undoCascadeSkip(cId, orig)
-                    setRefresh(r => r + 1)
-                  }}
+                  onClearReschedule={(cId, orig) => { clearReschedule(cId, orig); setRefresh(r => r + 1) }}
+                  onUndoSkip={(cId, orig) => { undoCascadeSkip(cId, orig); setRefresh(r => r + 1) }}
                   onNote={setNoteTarget}
-                  onSkip={(cId, orig) => {
-                    skipVisitToNextWeek(cId, orig)
-                    setRefresh(r => r + 1)
-                  }}
+                  onSkip={(cId, orig) => { skipVisitToNextWeek(cId, orig); setRefresh(r => r + 1) }}
                 />
               </motion.div>
             ))}
@@ -170,7 +160,6 @@ export default function Agenda() {
         )}
       </div>
 
-      {/* Sheets */}
       <AnimatePresence>
         {rescheduleTarget && (
           <Sheet key="reschedule" onClose={() => setRescheduleTarget(null)}>
@@ -192,8 +181,6 @@ export default function Agenda() {
   )
 }
 
-// ─── Summary tile ─────────────────────────────────────────────────────────────
-
 function SummaryTile({ label, node }) {
   return (
     <div style={S.summaryTile}>
@@ -202,8 +189,6 @@ function SummaryTile({ label, node }) {
     </div>
   )
 }
-
-// ─── Day group ────────────────────────────────────────────────────────────────
 
 function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearReschedule, onUndoSkip, onNote, onSkip }) {
   const parsed    = parseISO(date)
@@ -227,27 +212,19 @@ function DayGroup({ date, appointments, onToggle, isDone, onReschedule, onClearR
           <AppointmentCard
             key={appt.id}
             appt={appt}
-            done={isDone(appt.id)}
-            onToggle={() => onToggle(appt.id)}
-            onReschedule={() => onReschedule({ id: appt.id, clientId: appt.clientId, originalDate: appt.originalDate, currentDate: appt.date })}
+            done={isDone(appt)}
+            onToggle={() => onToggle(appt)}
+            onReschedule={() => !appt.isOccasion && onReschedule({ id: appt.id, clientId: appt.clientId, originalDate: appt.originalDate, currentDate: appt.date })}
             onClearReschedule={() => onClearReschedule(appt.clientId, appt.originalDate)}
             onUndoSkip={() => onUndoSkip(appt.clientId, appt.originalDate)}
             onNote={() => onNote({ clientId: appt.clientId, originalDate: appt.originalDate, clientName: appt.clientName, date: appt.date })}
-            onSkip={() => onSkip(appt.clientId, appt.originalDate)}
+            onSkip={() => !appt.isOccasion && onSkip(appt.clientId, appt.originalDate)}
           />
         ))}
       </div>
     </div>
   )
 }
-
-// ─── Appointment card ─────────────────────────────────────────────────────────
-//
-// "movido" tag behaviour:
-//   - Shown whenever displayDate !== originalDate (both isolated and cascade skips)
-//   - X button calls onUndoSkip (cascade undo, -7 days on this visit + all subsequent)
-//   - The calendar icon handles isolated reschedule (same week, different day)
-//     with its own "Voltar ao dia original" inside the sheet
 
 function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule, onUndoSkip, onNote, onSkip }) {
   const def    = SERVICE_TYPES[appt.service]
@@ -258,7 +235,7 @@ function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule
   return (
     <motion.div
       layout
-      style={{ ...S.card, opacity: done ? 0.42 : 1, borderColor: done ? 'var(--border)' : `${def.color}25` }}
+      style={{ ...S.card, opacity: done ? 0.42 : 1, borderColor: done ? 'var(--border)' : `${def.color}28` }}
       transition={{ duration: 0.2 }}
     >
       <div style={{ ...S.accentBar, background: def.color }} />
@@ -266,10 +243,14 @@ function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule
         <div style={S.cardTop}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, flexWrap: 'wrap' }}>
             <span style={{ ...S.serviceTag, color: def.color }}>{def.label}</span>
+            {appt.isOccasion && appt.fee > 0 && (
+              <span style={{ ...S.serviceTag, color: def.color, opacity: 0.7 }}>
+                R$ {appt.fee.toFixed(0)}
+              </span>
+            )}
             {appt.rescheduled && (
               <span style={S.rescheduledTag}>
                 <CalendarClock size={10} />movido
-                {/* X undoes one cascade skip layer (-7 days in cascade) */}
                 <button style={S.clearBtn} onClick={onUndoSkip}><X size={9} /></button>
               </span>
             )}
@@ -281,21 +262,21 @@ function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule
                 <MessageCircle size={16} color="#25D366" />
               </a>
             )}
-            {!done && (
-              <motion.button
-                style={S.iconBtn} onClick={onSkip}
-                title="Limpeza falhada — mover para próxima semana"
-                whileTap={{ scale: 0.85 }}
-              >
+            {/* Skip arrow — hidden for ocasional visits */}
+            {!done && !appt.isOccasion && (
+              <motion.button style={S.iconBtn} onClick={onSkip} title="Mover para próxima semana" whileTap={{ scale: 0.85 }}>
                 <SkipForward size={16} color="var(--text-3)" />
               </motion.button>
             )}
             <button style={S.iconBtn} onClick={onNote}>
               <StickyNote size={16} color={note ? 'var(--accent)' : 'var(--text-3)'} />
             </button>
-            <button style={S.iconBtn} onClick={onReschedule}>
-              <CalendarClock size={16} color={appt.rescheduled ? 'var(--accent)' : 'var(--text-3)'} />
-            </button>
+            {/* Calendar reschedule — hidden for ocasional */}
+            {!appt.isOccasion && (
+              <button style={S.iconBtn} onClick={onReschedule}>
+                <CalendarClock size={16} color={appt.rescheduled ? 'var(--accent)' : 'var(--text-3)'} />
+              </button>
+            )}
             <motion.button
               style={S.iconBtn} onClick={onToggle}
               whileTap={{ scale: 0.85 }} transition={{ type: 'spring', stiffness: 400, damping: 20 }}
@@ -312,10 +293,6 @@ function AppointmentCard({ appt, done, onToggle, onReschedule, onClearReschedule
     </motion.div>
   )
 }
-
-// ─── Bottom sheet wrapper ─────────────────────────────────────────────────────
-// Uses left:0 right:0 + margin:auto instead of left:50%+transform
-// to avoid Android rendering bugs with nested transforms.
 
 function Sheet({ children, onClose }) {
   return (
@@ -337,12 +314,9 @@ function Sheet({ children, onClose }) {
   )
 }
 
-// ─── Note sheet content ───────────────────────────────────────────────────────
-
 function NoteContent({ target, onSave, onClose }) {
   const [text, setText] = useState(getVisitNote(target.clientId, target.originalDate))
   const dateLabel = format(parseISO(target.date), "d 'de' MMMM", { locale: ptBR })
-
   return (
     <>
       <div style={S.sheetHeader}>
@@ -363,8 +337,6 @@ function NoteContent({ target, onSave, onClose }) {
     </>
   )
 }
-
-// ─── Reschedule sheet content ─────────────────────────────────────────────────
 
 function RescheduleContent({ target, weekStart, onConfirm, onClose }) {
   const days = Array.from({ length: 7 }, (_, i) => {
@@ -393,7 +365,7 @@ function RescheduleContent({ target, weekStart, onConfirm, onClose }) {
             }}>
               <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 700, textTransform: 'capitalize' }}>{label}</span>
               {isOriginal && !isCurrent && <span style={{ fontSize: 9, color: 'var(--text-3)' }}>original</span>}
-              {isCurrent && <span style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700 }}>atual</span>}
+              {isCurrent  && <span style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700 }}>atual</span>}
             </button>
           )
         })}
@@ -407,8 +379,6 @@ function RescheduleContent({ target, weekStart, onConfirm, onClose }) {
   )
 }
 
-// ─── Empty state ──────────────────────────────────────────────────────────────
-
 function EmptyAgenda({ weekOffset }) {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }} style={S.empty}>
@@ -420,60 +390,53 @@ function EmptyAgenda({ weekOffset }) {
         <rect x="30" y="14" width="10" height="4" rx="2" transform="rotate(-45 30 14)" fill="var(--accent)" opacity="0.8" />
       </svg>
       <p style={S.emptyTitle}>Nenhuma limpeza</p>
-      <p style={S.emptyText}>{weekOffset === 0 ? 'Sem agendamentos para esta semana. Adicione clientes para começar.' : 'Sem agendamentos nessa semana.'}</p>
+      <p style={S.emptyText}>{weekOffset === 0 ? 'Sem agendamentos para esta semana.' : 'Sem agendamentos nessa semana.'}</p>
     </motion.div>
   )
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const S = {
-  header:       { padding: '16px 20px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
-  subtitle:     { fontSize: 13, color: 'var(--text-2)', fontWeight: 300 },
-  progressWrap: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, minWidth: 80 },
-  progressText: { fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--accent)' },
-  summaryStrip: {
-    margin: '14px 20px 0', background: 'var(--bg-2)',
-    border: '1px solid var(--border)', borderRadius: 'var(--r-md)',
-    display: 'flex', alignItems: 'stretch',
-  },
-  summaryTile:  { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 6px', gap: 4 },
-  summaryLabel: { fontSize: 9, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-3)', fontWeight: 700 },
-  summaryValue: { fontSize: 13, fontWeight: 800 },
-  divider:      { width: 1, background: 'var(--border)', margin: '10px 0' },
-  weekNav:      { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px 0' },
-  navArrow:     { width: 36, height: 36, borderRadius: 'var(--r-sm)', background: 'var(--bg-3)', border: '1px solid var(--border)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
-  weekLabel:    { fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, color: 'var(--text-2)' },
-  content:      { padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 0 },
-  dayGroup:     { display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 },
-  dayHeader:    { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  dayName:      { fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700 },
-  todayBadge:   { fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--bg)', background: 'var(--accent)', padding: '2px 7px', borderRadius: 4 },
-  dayDate:      { fontSize: 12, color: 'var(--text-3)' },
-  card:         { background: 'var(--bg-2)', border: '1px solid', borderRadius: 'var(--r-md)', display: 'flex', overflow: 'hidden' },
-  accentBar:    { width: 3, flexShrink: 0 },
-  cardBody:     { flex: 1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 5 },
-  cardTop:      { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 },
-  serviceTag:   { fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.06em' },
+  header:         { padding: '16px 20px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
+  subtitle:       { fontSize: 13, color: 'var(--text-2)', fontWeight: 300 },
+  progressWrap:   { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, minWidth: 80 },
+  progressText:   { fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--accent)' },
+  summaryStrip:   { margin: '14px 20px 0', background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', display: 'flex', alignItems: 'stretch' },
+  summaryTile:    { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 6px', gap: 4 },
+  summaryLabel:   { fontSize: 9, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-3)', fontWeight: 700 },
+  summaryValue:   { fontSize: 13, fontWeight: 800 },
+  divider:        { width: 1, background: 'var(--border)', margin: '10px 0' },
+  weekNav:        { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px 0' },
+  navArrow:       { width: 36, height: 36, borderRadius: 'var(--r-sm)', background: 'var(--bg-3)', border: '1px solid var(--border)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' },
+  weekLabel:      { fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, color: 'var(--text-2)' },
+  content:        { padding: '16px 20px' },
+  dayGroup:       { display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 },
+  dayHeader:      { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  dayName:        { fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700 },
+  todayBadge:     { fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--bg)', background: 'var(--accent)', padding: '2px 7px', borderRadius: 4 },
+  dayDate:        { fontSize: 12, color: 'var(--text-3)' },
+  card:           { background: 'var(--bg-2)', border: '1px solid', borderRadius: 'var(--r-md)', display: 'flex', overflow: 'hidden' },
+  accentBar:      { width: 3, flexShrink: 0 },
+  cardBody:       { flex: 1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 5 },
+  cardTop:        { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 },
+  serviceTag:     { fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.06em' },
   rescheduledTag: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: 'var(--accent)', background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', borderRadius: 4, padding: '1px 5px', fontWeight: 600 },
-  noteChip:     { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: 'var(--accent)', fontWeight: 600 },
-  clearBtn:     { background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 0 0 2px', color: 'var(--accent)' },
-  iconBtn:      { background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 4 },
-  clientName:   { fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em' },
-  notePreview:  { fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, background: 'var(--bg-3)', borderRadius: 6, padding: '6px 10px', borderLeft: '2px solid var(--accent)' },
-  // Overlay + sheet: avoid left:50%+transform (Android bug), use inset 0 + maxWidth + margin auto
-  overlay:      { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 200 },
-  sheetWrapper: { position: 'fixed', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 201, pointerEvents: 'none' },
-  sheet:        { width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '20px 20px calc(var(--nav-height) + 16px)', pointerEvents: 'auto' },
-  sheetHeader:  { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
-  sheetTitle:   { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800 },
-  sheetSub:     { fontSize: 13, color: 'var(--text-2)', marginTop: 3 },
-  sheetClose:   { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-2)', display: 'flex', flexShrink: 0 },
-  noteInput:    { width: '100%', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '14px', color: 'var(--text)', fontSize: 15, resize: 'none', lineHeight: 1.6, fontFamily: 'var(--font-body)', colorScheme: 'dark' },
-  clearNoteBtn: { padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'none', border: '1px solid var(--border)', color: '#FF6B6B', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  saveBtn:      { flex: 1, padding: '12px', borderRadius: 'var(--r-md)', background: 'var(--accent)', border: 'none', color: 'var(--bg)', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
-  dayOption:    { padding: '12px 4px', borderRadius: 'var(--r-sm)', border: '1px solid', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 },
-  empty:        { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '48px 32px', gap: 10, textAlign: 'center' },
-  emptyTitle:   { fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700 },
-  emptyText:    { fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, fontWeight: 300 },
+  noteChip:       { display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: 'var(--accent)', fontWeight: 600 },
+  clearBtn:       { background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0 0 0 2px', color: 'var(--accent)' },
+  iconBtn:        { background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 4 },
+  clientName:     { fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em' },
+  notePreview:    { fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5, background: 'var(--bg-3)', borderRadius: 6, padding: '6px 10px', borderLeft: '2px solid var(--accent)' },
+  overlay:        { position: 'fixed', inset: 0, background: 'var(--overlay)', zIndex: 200 },
+  sheetWrapper:   { position: 'fixed', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 201, pointerEvents: 'none' },
+  sheet:          { width: '100%', maxWidth: 480, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', borderRadius: '24px 24px 0 0', padding: '20px 20px calc(var(--nav-height) + 16px)', pointerEvents: 'auto' },
+  sheetHeader:    { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
+  sheetTitle:     { fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 800, color: 'var(--text)' },
+  sheetSub:       { fontSize: 13, color: 'var(--text-2)', marginTop: 3 },
+  sheetClose:     { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-2)', display: 'flex', flexShrink: 0 },
+  noteInput:      { width: '100%', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '14px', color: 'var(--text)', fontSize: 15, resize: 'none', lineHeight: 1.6, fontFamily: 'var(--font-body)', colorScheme: 'dark light' },
+  clearNoteBtn:   { padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'none', border: '1px solid var(--border)', color: 'var(--danger)', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  saveBtn:        { flex: 1, padding: '12px', borderRadius: 'var(--r-md)', background: 'var(--accent)', border: 'none', color: 'var(--bg)', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  dayOption:      { padding: '12px 4px', borderRadius: 'var(--r-sm)', border: '1px solid', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 },
+  empty:          { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '48px 32px', gap: 10, textAlign: 'center' },
+  emptyTitle:     { fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: 'var(--text)' },
+  emptyText:      { fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6, fontWeight: 300 },
 }

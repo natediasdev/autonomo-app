@@ -60,15 +60,26 @@ export default function Layout({ children }) {
         {NAV.map(({ path, label, Icon }) => {
           const active = isActive(path)
           return (
-            <button key={path} onClick={() => navigate(path)} style={{ ...S.btn, color: active ? 'var(--accent)' : 'var(--text-3)' }}>
+            <button
+              key={path}
+              onClick={() => navigate(path)}
+              style={{ ...S.btn, color: active ? 'var(--accent)' : 'var(--text-3)' }}
+            >
               <div style={{ position: 'relative' }}>
                 {active && (
-                  <motion.div layoutId="nav-dot" style={S.dot}
-                    transition={{ type: 'spring', stiffness: 500, damping: 30 }} />
+                  <motion.div
+                    layoutId="nav-dot"
+                    style={S.dot}
+                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                  />
                 )}
                 <Icon active={active} />
               </div>
-              <span style={{ ...S.label, fontWeight: active ? 700 : 400, color: active ? 'var(--accent)' : 'var(--text-3)' }}>
+              <span style={{
+                ...S.label,
+                fontWeight: active ? 700 : 400,
+                color: active ? 'var(--accent)' : 'var(--text-3)',
+              }}>
                 {label}
               </span>
             </button>
@@ -80,10 +91,41 @@ export default function Layout({ children }) {
 }
 
 const S = {
-  root:  { display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)', maxWidth: 480, margin: '0 auto' },
-  main:  { flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: 'calc(var(--nav-height) + var(--safe-bottom))' },
-  nav:   { position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 480, height: 'calc(var(--nav-height) + var(--safe-bottom))', paddingBottom: 'var(--safe-bottom)', background: 'rgba(6,6,6,0.92)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-around', zIndex: 100 },
-  btn:   { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 20px', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 200ms' },
-  label: { fontSize: 10, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.05em', transition: 'color 200ms' },
-  dot:   { position: 'absolute', top: -5, right: -4, width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' },
+  root: {
+    display: 'flex', flexDirection: 'column', height: '100%',
+    background: 'var(--bg)', maxWidth: 480, margin: '0 auto',
+  },
+  main: {
+    flex: 1, overflowY: 'auto', overflowX: 'hidden',
+    paddingBottom: 'calc(var(--nav-height) + var(--safe-bottom))',
+  },
+  nav: {
+    position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)',
+    width: '100%', maxWidth: 480,
+    height: 'calc(var(--nav-height) + var(--safe-bottom))',
+    paddingBottom: 'var(--safe-bottom)',
+    // Theme-aware: uses CSS variables instead of hardcoded rgba(6,6,6,...)
+    background: 'var(--bg-2)',
+    borderTop: '1px solid var(--border)',
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'space-around',
+    zIndex: 100,
+    transition: 'background 200ms ease, border-color 200ms ease',
+  },
+  btn: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+    padding: '8px 20px', background: 'none', border: 'none',
+    cursor: 'pointer', transition: 'color 200ms',
+  },
+  label: {
+    fontSize: 10, fontFamily: 'var(--font-display)',
+    textTransform: 'uppercase', letterSpacing: '0.05em',
+    transition: 'color 200ms',
+  },
+  dot: {
+    position: 'absolute', top: -5, right: -4,
+    width: 5, height: 5, borderRadius: '50%',
+    background: 'var(--accent)',
+  },
 }
